@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "msp-control"
+version = "0.1.0"
+description = "Control and data acquisition software for a microspectrophotometer"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+]
+
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+]
+
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
