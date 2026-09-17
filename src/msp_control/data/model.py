@@ -14,8 +14,9 @@ class Baseline:
     raw_dark: np.ndarray
     raw_baseline: np.ndarray
 
-    dark: np.ndarray
-    baseline: np.ndarray
+    dark_mean: np.ndarray
+    baseline_mean: np.ndarray
+    baseline_corrected: np.ndarray
 
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -31,8 +32,9 @@ class Scan:
     raw_dark: np.ndarray
     raw_specimen: np.ndarray
 
-    dark: np.ndarray
-    specimen: np.ndarray
+    dark_mean: np.ndarray
+    specimen_mean: np.ndarray
+    specimen_corrected: np.ndarray
     optical_density: np.ndarray
 
     metadata: dict[str, Any] = field(default_factory=dict)

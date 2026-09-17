@@ -12,15 +12,17 @@ raw_dark_baseline = np.random.normal(0.1, 0.005, (2, len(wavelength)))
 raw_baseline = np.random.normal(5.0, 0.05, (5, len(wavelength)))
 
 dark_baseline = np.mean(raw_dark_baseline, axis=0)
-baseline_signal = np.mean(raw_baseline, axis=0) - dark_baseline
+baseline_mean = np.mean(raw_baseline, axis=0)
+baseline_corrected = baseline_mean - dark_baseline
 
 baseline = Baseline(
     baseline_index=0,
     wavelength=wavelength,
     raw_dark=raw_dark_baseline,
     raw_baseline=raw_baseline,
-    dark=dark_baseline,
-    baseline=baseline_signal,
+    dark_mean=dark_baseline,
+    baseline_mean=baseline_mean,
+    baseline_corrected=baseline_corrected,
     metadata={
         "number_of_dark_scans": 2,
         "number_of_scans": 5,
@@ -33,9 +35,12 @@ raw_dark_specimen = np.random.normal(0.1, 0.005, (2, len(wavelength)))
 raw_specimen = np.random.normal(3.0, 0.05, (5, len(wavelength)))
 
 dark_specimen = np.mean(raw_dark_specimen, axis=0)
-specimen_signal = np.mean(raw_specimen, axis=0) - dark_specimen
+specimen_mean = np.mean(raw_specimen, axis=0)
+specimen_corrected = specimen_mean - dark_specimen
 
-optical_density = -np.log10(specimen_signal / baseline.baseline)
+optical_density = -np.log10(
+    specimen_corrected / baseline.baseline_corrected
+)
 
 scan = Scan(
     scan_index=0,
@@ -43,8 +48,9 @@ scan = Scan(
     wavelength=wavelength,
     raw_dark=raw_dark_specimen,
     raw_specimen=raw_specimen,
-    dark=dark_specimen,
-    specimen=specimen_signal,
+    dark_mean=dark_specimen,
+    specimen_mean=specimen_mean,
+    specimen_corrected=specimen_corrected,
     optical_density=optical_density,
     metadata={
         "number_of_dark_scans": 2,
@@ -77,5 +83,5 @@ def test_experiment():
     assert experiment.baselines[0].baseline_index == 0
     assert experiment.scan_groups[0].scans[0].baseline_index == 0
 
-    assert experiment.baselines[0].baseline.shape == wavelength.shape
+    assert experiment.baselines[0].baseline_corrected.shape == wavelength.shape
     assert experiment.scan_groups[0].scans[0].optical_density.shape == wavelength.shape
