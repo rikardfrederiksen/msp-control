@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import serial
 
 @dataclass(frozen=True)
 class ScanConfig:
@@ -72,3 +73,60 @@ def build_config_commands(config: ScanConfig) -> list[str]:
         f"{round(config.input_slit_nm * 10)} scan_inslit_width !",
         f"{round(config.output_slit_nm * 10)} scan_exslit_width !",
     ]
+
+class OptoscanSerial:
+    """Serial connection to a Cairn Optoscan controller."""
+
+    def __init__(
+        self,
+        port: str,
+        baudrate: int = 9600,
+        timeout: float = 10.0,
+    ):
+        self.port = port
+        self.baudrate = baudrate
+        self.timeout = timeout
+        self._serial = None
+
+    def open(self) -> None:
+        """Open the serial connection."""
+        self._serial = serial.Serial(
+            port=self.port,
+            baudrate=self.baudrate,
+            bytesize=serial.EIGHTBITS,
+            parity=serial.PARITY_NONE,
+            stopbits=serial.STOPBITS_ONE,
+            timeout=self.timeout,
+            xonxoff=False,
+            rtscts=False,
+            dsrdtr=False,
+        )
+
+    def close(self) -> None:
+        """Close the serial connection."""
+        if self._serial is not None:
+            self._serial.close()
+            self._serial = None
+
+    @property
+    def is_open(self) -> bool:
+        return self._serial is not None and self._serial.is_open
+
+    def send_command(self, command: str) -> str:
+        """Send one command to the Optoscan and return its response."""
+
+        if not self.is_open:
+            raise RuntimeError("Optoscan serial port is not open")
+
+        message = (command + "\n").encode("ascii")
+        self._serial.write(message)
+        self._serial.flush()
+
+        response = self._serial.readline()
+
+        if not response:
+            raise TimeoutError(
+                f"No response from Optoscan after command: {command!r}"
+            )
+
+        return response.decode("ascii").strip()

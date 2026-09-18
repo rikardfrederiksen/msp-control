@@ -1,5 +1,25 @@
 import pytest
-from msp_control.hardware.optoscan import ScanConfig, build_config_commands
+from msp_control.hardware.optoscan import (
+    OptoscanSerial,
+    ScanConfig,
+    build_config_commands,
+)
+
+class FakeSerial:
+    def __init__(self, response=b"ok\n"):
+        self.is_open = True
+        self.response = response
+        self.written = b""
+        self.flushed = False
+
+    def write(self, data):
+        self.written += data
+
+    def flush(self):
+        self.flushed = True
+
+    def readline(self):
+        return self.response
 
 
 def test_scan_config():
@@ -77,3 +97,14 @@ def test_build_config_commands():
         "40 scan_inslit_width !",
         "40 scan_exslit_width !",
     ]
+
+def test_send_command():
+    optoscan = OptoscanSerial(port="/dev/null")
+    fake_serial = FakeSerial(response=b"ok\n")
+    optoscan._serial = fake_serial
+
+    response = optoscan.send_command("close_slits")
+
+    assert fake_serial.written == b"close_slits\n"
+    assert fake_serial.flushed
+    assert response == "ok"

@@ -10,6 +10,7 @@ description = "Control and data acquisition software for a microspectrophotomete
 requires-python = ">=3.11"
 dependencies = [
     "numpy",
+    "pyserial",
 ]
 
 
