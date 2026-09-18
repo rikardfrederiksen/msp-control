@@ -288,7 +288,38 @@ wavelength points is:
 
 The existing LabVIEW interface displays 181 points for this scan
 configuration, consistent with this calculation.
+## Triggering and timing
 
+The DAQ is configured for one finite acquisition containing all Optoscan
+cycles. A single `TRIG` pulse occurs at the beginning of the complete scan
+program and starts the DAQ acquisition. `CLOCK` produces one pulse per
+wavelength point and serves as the external DAQ sample clock.
+
+Thus, for \(N_\lambda\) wavelength points and \(N_c\) cycles, the total
+number of acquired samples is
+
+\[
+N_{\mathrm{samples}} = N_c N_\lambda.
+\]
+
+A cycle consists of one complete wavelength sweep. The configured cycle
+count is
+
+\[
+N_c = N_{\mathrm{dark}} + 1 + N_{\mathrm{data}},
+\]
+
+where the additional sweep occurs during the PMT-shutter transition and
+is discarded.
+
+## Scan step timing
+
+`scan_step_time_lo` determines the time spent at each wavelength point.
+Empirically, a value of `2000` corresponds to 2 ms and `20000` to 20 ms,
+consistent with a controller time unit of 1 µs.
+
+Normal operation uses `scan_step_time_hi = 0`. The encoding of longer
+times using the high word has not yet been established.
 
 ## PMT shutter control
 
