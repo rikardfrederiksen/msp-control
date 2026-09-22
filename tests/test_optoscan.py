@@ -200,3 +200,33 @@ def test_configure_scan():
 
     assert fake_serial.written == expected
     assert len(responses) == len(commands)
+
+def test_run_scan():
+    fake_serial = FakeSerial(
+        responses=[
+            b"run_scan_prog Scanning. Press any key to stop now \r\n",
+            b" ok\r\n",
+        ]
+    )
+
+    optoscan = OptoscanSerial("COM1")
+    optoscan._serial = fake_serial
+
+    optoscan.run_scan()
+
+    assert fake_serial.written == b"run_scan_prog\n"
+    assert fake_serial.flushed
+
+def test_run_scan_rejects_unexpected_start_response():
+    fake_serial = FakeSerial(
+        responses=[
+            b"unexpected response\r\n",
+        ]
+    )
+
+    optoscan = OptoscanSerial("COM1")
+    optoscan._serial = fake_serial
+
+    with pytest.raises(RuntimeError, match="scan-start"):
+        optoscan.run_scan()
+

@@ -198,6 +198,33 @@ The observation that LabVIEW passes `run_scan_prog` to the serial-command
 routine is considered established. Details of the controller's internal
 implementation of this command remain undocumented.
 
+### `run_scan_prog` response
+
+The serial behavior of `run_scan_prog` was measured directly on the
+controller.
+
+After sending:
+
+    PC -> b"run_scan_prog\n"
+
+the controller begins scanning and immediately returns:
+
+    Optoscan -> b"run_scan_prog Scanning. Press any key to stop now \r\n"
+
+The configured finite scan then executes. After all configured cycles
+have completed, the controller returns:
+
+    Optoscan -> b" ok\r\n"
+
+Thus, unlike ordinary Forth commands, `run_scan_prog` produces two
+serial responses: an initial message indicating that scanning has
+started and a final `ok` after the scan program has completed.
+
+The message indicating that any key may be pressed to stop the scan is
+also displayed for finite scans. This appears to provide a mechanism
+for terminating a scan before the configured number of cycles has
+completed, but this behavior has not yet been tested.
+
 
 ## Scan cycles
 

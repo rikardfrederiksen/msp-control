@@ -209,3 +209,28 @@ class OptoscanSerial:
             responses.append(self.send_command(command))
 
         return responses
+
+    def run_scan(self) -> None:
+        """Run the currently configured scan program."""
+
+        if not self.is_open:
+            raise RuntimeError("Optoscan serial port is not open")
+
+        self._serial.write(b"run_scan_prog\n")
+        self._serial.flush()
+
+        start_response = self._serial.readline().decode("ascii").strip()
+
+        if "Scanning." not in start_response:
+            raise RuntimeError(
+                f"Unexpected Optoscan scan-start response: "
+                f"{start_response!r}"
+            )
+
+        completion_response = self._serial.readline().decode("ascii").strip()
+
+        if completion_response.lower() != "ok":
+            raise RuntimeError(
+                f"Unexpected Optoscan scan-completion response: "
+                f"{completion_response!r}"
+            )
