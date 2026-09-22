@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import serial
+import time
 
 @dataclass(frozen=True)
 class ScanConfig:
@@ -112,32 +113,55 @@ class OptoscanSerial:
     def is_open(self) -> bool:
         return self._serial is not None and self._serial.is_open
 
+    def _read_until(self, expected: bytes, timeout: float = 1.0) -> bytes:
+        """Read serial data until the expected byte sequence is received."""
+
+        deadline = time.monotonic() + timeout
+        response = bytearray()
+
+        while time.monotonic() < deadline:
+            waiting = self._serial.in_waiting
+
+            if waiting:
+                response.extend(self._serial.read(waiting))
+
+                if expected in response:
+                    return bytes(response)
+
+            time.sleep(0.01)
+
+        raise TimeoutError(
+            f"Timed out waiting for {expected!r}; received {bytes(response)!r}"
+        )
+
     def enter_diagnostic_mode(self) -> None:
         """Enter the Optoscan diagnostic/Forth command interface."""
 
         if not self.is_open:
             raise RuntimeError("Optoscan serial port is not open")
 
-        # Wake the controller/menu interface.
         self._serial.reset_input_buffer()
+
+        # Wake the controller/menu interface.
         self._serial.write(b"\n")
         self._serial.flush()
-
-        response = self._serial.read(100)
-        if b"\x1b" not in response:
-            raise RuntimeError(
-                f"Unexpected response while waking Optoscan: {response!r}"
-            )
+        self._read_until(b"\x1b")
 
         # Menu option 9 enters diagnostic mode.
         self._serial.write(b"9")
         self._serial.flush()
+        self._read_until(b"\x1b")
 
-        response = self._serial.read(100)
-        if b"\x1b" not in response:
-            raise RuntimeError(
-                f"Unexpected response entering diagnostic mode: {response!r}"
-            )
+    def exit_diagnostic_mode(self) -> None:
+        """Exit the diagnostic/Forth interface and return to the main menu."""
+
+        if not self.is_open:
+            raise RuntimeError("Optoscan serial port is not open")
+
+        self._serial.write(b"menu\n")
+        self._serial.flush()
+
+        self._read_until(b"9. Enter diagnostic mode")
 
     def send_command(self, command: str) -> str:
         """Send one command to the Optoscan and return its response."""

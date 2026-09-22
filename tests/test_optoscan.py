@@ -22,12 +22,18 @@ class FakeSerial:
     def reset_input_buffer(self):
         self.input_buffer_reset = True
 
+    @property
+    def in_waiting(self):
+        if not self.responses:
+            return 0
+        return len(self.responses[0])
+
     def read(self, size):
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        return response[:size]
 
     def readline(self):
         return self.responses.pop(0)
-
 
 def test_scan_config():
     config = ScanConfig(
@@ -132,3 +138,34 @@ def test_enter_diagnostic_mode():
 
     assert fake_serial.input_buffer_reset
     assert fake_serial.written == b"\n9"
+
+def test_exit_diagnostic_mode():
+    optoscan = OptoscanSerial(port="/dev/null")
+    fake_serial = FakeSerial(
+        responses=[
+            b"menu \x1b\x1b\r\n",
+            b"1. Something\r\n"
+            b"2. Something else\r\n"
+            b"9. Enter diagnostic mode\r\n",
+        ]
+    )
+    optoscan._serial = fake_serial
+
+    optoscan.exit_diagnostic_mode()
+
+    assert fake_serial.written == b"menu\n"
+    assert fake_serial.flushed
+
+def test_read_until_accumulates_response():
+    optoscan = OptoscanSerial(port="/dev/null")
+    fake_serial = FakeSerial(
+        responses=[
+            b"9. Enter diagn",
+            b"ostic mode\r\n",
+        ]
+    )
+    optoscan._serial = fake_serial
+
+    response = optoscan._read_until(b"9. Enter diagnostic mode")
+
+    assert response == b"9. Enter diagnostic mode\r\n"
