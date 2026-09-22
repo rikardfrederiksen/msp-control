@@ -143,10 +143,7 @@ def test_exit_diagnostic_mode():
     optoscan = OptoscanSerial(port="/dev/null")
     fake_serial = FakeSerial(
         responses=[
-            b"menu \x1b\x1b\r\n",
-            b"1. Something\r\n"
-            b"2. Something else\r\n"
-            b"9. Enter diagnostic mode\r\n",
+            b"menu \x1b\x1b",
         ]
     )
     optoscan._serial = fake_serial

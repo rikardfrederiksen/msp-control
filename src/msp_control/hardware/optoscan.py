@@ -148,9 +148,10 @@ class OptoscanSerial:
         self._read_until(b"\x1b")
 
         # Menu option 9 enters diagnostic mode.
+        # Consume the complete response: b"\x1b\x1f\r\n".
         self._serial.write(b"9")
         self._serial.flush()
-        self._read_until(b"\x1b")
+        self._read_until(b"\r\n")
 
     def exit_diagnostic_mode(self) -> None:
         """Exit the diagnostic/Forth interface and return to the main menu."""
@@ -161,7 +162,7 @@ class OptoscanSerial:
         self._serial.write(b"menu\n")
         self._serial.flush()
 
-        self._read_until(b"9. Enter diagnostic mode")
+        self._read_until(b"\x1b\x1b")
 
     def send_command(self, command: str) -> str:
         """Send one command to the Optoscan and return its response."""

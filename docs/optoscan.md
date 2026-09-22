@@ -288,6 +288,68 @@ wavelength points is:
 
 The existing LabVIEW interface displays 181 points for this scan
 configuration, consistent with this calculation.
+
+## Serial protocol and diagnostic mode
+
+The Optoscan controller communicates over RS-232 using the following
+settings:
+
+- 9600 baud
+- 8 data bits
+- no parity
+- 1 stop bit
+- no flow control
+
+Normal diagnostic-mode commands are ASCII strings terminated by LF
+(`\n`). The controller echoes the command and normally terminates a
+successful response with `ok\r\n`.
+
+For example:
+
+    PC -> b"close_slits\n"
+    Optoscan -> b"close_slits  ok\r\n"
+
+### Entering diagnostic mode
+
+The controller starts in its normal menu interface. Diagnostic mode
+provides access to the Forth command interpreter used by the MSP
+control software.
+
+The following byte-level exchange was measured directly from the
+controller:
+
+    PC -> b"\n"
+    Optoscan -> b"\x1b"
+
+    PC -> b"9"
+    Optoscan -> b"\x1b\x1f\r\n"
+
+Thus, entering diagnostic mode is a two-step operation. The initial LF
+wakes or synchronizes with the menu interface, and menu option `9`
+enters diagnostic mode.
+
+The complete response to `9` must be consumed before sending the first
+Forth command. In particular, returning immediately after receiving
+the first `ESC` byte (`0x1b`) can leave `b"\x1f\r\n"` in the serial
+input buffer, causing the next command response to be parsed
+incorrectly.
+
+### Exiting diagnostic mode
+
+Diagnostic mode is exited by sending:
+
+    PC -> b"menu\n"
+
+The following response was measured:
+
+    Optoscan -> b"menu \x1b\x1b"
+
+After this exchange the controller returns to its normal menu.
+
+The exit response is therefore handled separately from normal Forth
+commands and should not be expected to contain `ok`.
+
+
 ## Triggering and timing
 
 The DAQ is configured for one finite acquisition containing all Optoscan
