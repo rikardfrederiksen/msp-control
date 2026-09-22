@@ -6,11 +6,12 @@ from msp_control.hardware.optoscan import (
 )
 
 class FakeSerial:
-    def __init__(self, response=b"ok\n"):
+    def __init__(self, responses=None):
         self.is_open = True
-        self.response = response
+        self.responses = list(responses or [b"ok\n"])
         self.written = b""
         self.flushed = False
+        self.input_buffer_reset = False
 
     def write(self, data):
         self.written += data
@@ -18,8 +19,14 @@ class FakeSerial:
     def flush(self):
         self.flushed = True
 
+    def reset_input_buffer(self):
+        self.input_buffer_reset = True
+
+    def read(self, size):
+        return self.responses.pop(0)
+
     def readline(self):
-        return self.response
+        return self.responses.pop(0)
 
 
 def test_scan_config():
@@ -100,11 +107,28 @@ def test_build_config_commands():
 
 def test_send_command():
     optoscan = OptoscanSerial(port="/dev/null")
-    fake_serial = FakeSerial(response=b"ok\n")
+    fake_serial = FakeSerial(
+        responses=[b"close_slits  ok\r\n"]
+    )
     optoscan._serial = fake_serial
 
     response = optoscan.send_command("close_slits")
 
     assert fake_serial.written == b"close_slits\n"
     assert fake_serial.flushed
-    assert response == "ok"
+    assert response == "close_slits  ok"
+
+def test_enter_diagnostic_mode():
+    optoscan = OptoscanSerial(port="/dev/null")
+    fake_serial = FakeSerial(
+        responses=[
+            b"\x1b",
+            b"\x1b\x1f\r\n",
+        ]
+    )
+    optoscan._serial = fake_serial
+
+    optoscan.enter_diagnostic_mode()
+
+    assert fake_serial.input_buffer_reset
+    assert fake_serial.written == b"\n9"

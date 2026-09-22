@@ -112,6 +112,33 @@ class OptoscanSerial:
     def is_open(self) -> bool:
         return self._serial is not None and self._serial.is_open
 
+    def enter_diagnostic_mode(self) -> None:
+        """Enter the Optoscan diagnostic/Forth command interface."""
+
+        if not self.is_open:
+            raise RuntimeError("Optoscan serial port is not open")
+
+        # Wake the controller/menu interface.
+        self._serial.reset_input_buffer()
+        self._serial.write(b"\n")
+        self._serial.flush()
+
+        response = self._serial.read(100)
+        if b"\x1b" not in response:
+            raise RuntimeError(
+                f"Unexpected response while waking Optoscan: {response!r}"
+            )
+
+        # Menu option 9 enters diagnostic mode.
+        self._serial.write(b"9")
+        self._serial.flush()
+
+        response = self._serial.read(100)
+        if b"\x1b" not in response:
+            raise RuntimeError(
+                f"Unexpected response entering diagnostic mode: {response!r}"
+            )
+
     def send_command(self, command: str) -> str:
         """Send one command to the Optoscan and return its response."""
 
@@ -129,4 +156,17 @@ class OptoscanSerial:
                 f"No response from Optoscan after command: {command!r}"
             )
 
-        return response.decode("ascii").strip()
+        response_text = response.decode("ascii").strip()
+
+        if "error" in response_text.lower():
+            raise RuntimeError(
+                f"Optoscan error after command {command!r}: {response_text!r}"
+            )
+
+        if "ok" not in response_text.lower():
+            raise RuntimeError(
+                f"Unexpected Optoscan response after command "
+                f"{command!r}: {response_text!r}"
+            )
+
+        return response_text
