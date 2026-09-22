@@ -195,3 +195,17 @@ class OptoscanSerial:
             )
 
         return response_text
+
+    def configure_scan(self, config: ScanConfig) -> list[str]:
+        """Configure the Optoscan for a wavelength scan.
+
+        Sends the complete scan-configuration command sequence to the
+        controller and returns the controller responses.
+        """
+
+        responses = []
+
+        for command in build_config_commands(config):
+            responses.append(self.send_command(command))
+
+        return responses

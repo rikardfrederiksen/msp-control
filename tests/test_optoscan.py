@@ -166,3 +166,37 @@ def test_read_until_accumulates_response():
     response = optoscan._read_until(b"9. Enter diagnostic mode")
 
     assert response == b"9. Enter diagnostic mode\r\n"
+
+def test_configure_scan():
+    config = ScanConfig(
+        start_nm=360,
+        end_nm=720,
+        step_nm=2,
+        step_time_ms=2,
+        input_slit_nm=4,
+        output_slit_nm=4,
+        dark_scans=2,
+        data_scans=5,
+    )
+
+    commands = build_config_commands(config)
+
+    fake_serial = FakeSerial(
+        responses=[
+            f"{command}  ok\r\n".encode("ascii")
+            for command in commands
+        ]
+    )
+
+    optoscan = OptoscanSerial("COM1")
+    optoscan._serial = fake_serial
+
+    responses = optoscan.configure_scan(config)
+
+    expected = b"".join(
+        (command + "\n").encode("ascii")
+        for command in commands
+    )
+
+    assert fake_serial.written == expected
+    assert len(responses) == len(commands)
