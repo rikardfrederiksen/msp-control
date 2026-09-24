@@ -212,10 +212,12 @@ def test_run_scan():
     optoscan = OptoscanSerial("COM1")
     optoscan._serial = fake_serial
 
-    optoscan.run_scan()
+    start_response, completion_response = optoscan.run_scan()
 
     assert fake_serial.written == b"run_scan_prog\n"
     assert fake_serial.flushed
+    assert "Scanning." in start_response
+    assert completion_response == " ok\r\n"
 
 def test_run_scan_rejects_unexpected_start_response():
     fake_serial = FakeSerial(
@@ -230,3 +232,50 @@ def test_run_scan_rejects_unexpected_start_response():
     with pytest.raises(RuntimeError, match="scan-start"):
         optoscan.run_scan()
 
+def test_start_scan():
+    fake_serial = FakeSerial(
+        responses=[
+            b"run_scan_prog Scanning. Press any key to stop now \r\n",
+            b" ok\r\n",
+        ]
+    )
+
+    optoscan = OptoscanSerial("COM1")
+    optoscan._serial = fake_serial
+
+    response = optoscan.start_scan()
+
+    assert fake_serial.written == b"run_scan_prog\n"
+    assert fake_serial.flushed
+    assert "Scanning." in response
+
+    # The completion response must still be waiting.
+    assert fake_serial.responses == [b" ok\r\n"]
+
+
+def test_wait_for_scan_complete():
+    fake_serial = FakeSerial(
+        responses=[
+            b" ok\r\n",
+        ]
+    )
+
+    optoscan = OptoscanSerial("COM1")
+    optoscan._serial = fake_serial
+
+    response = optoscan.wait_for_scan_complete()
+
+    assert response == " ok\r\n"
+
+def test_wait_for_scan_complete_rejects_unexpected_response():
+    fake_serial = FakeSerial(
+        responses=[
+            b"unexpected response\r\n",
+        ]
+    )
+
+    optoscan = OptoscanSerial("COM1")
+    optoscan._serial = fake_serial
+
+    with pytest.raises(RuntimeError, match="scan-completion"):
+        optoscan.wait_for_scan_complete()

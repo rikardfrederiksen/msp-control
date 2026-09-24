@@ -210,27 +210,45 @@ class OptoscanSerial:
 
         return responses
 
-    def run_scan(self) -> None:
-        """Run the currently configured scan program."""
+    def start_scan(self) -> str:
+        """Start the configured scan and return after scanning begins."""
 
-        if not self.is_open:
-            raise RuntimeError("Optoscan serial port is not open")
+        if self._serial is None:
+            raise RuntimeError("Serial port is not open")
 
         self._serial.write(b"run_scan_prog\n")
         self._serial.flush()
 
-        start_response = self._serial.readline().decode("ascii").strip()
+        response = self._serial.readline().decode("ascii")
 
-        if "Scanning." not in start_response:
+        if "Scanning." not in response:
             raise RuntimeError(
-                f"Unexpected Optoscan scan-start response: "
-                f"{start_response!r}"
+                f"Unexpected scan-start response: {response!r}"
             )
 
-        completion_response = self._serial.readline().decode("ascii").strip()
+        return response
 
-        if completion_response.lower() != "ok":
+
+    def wait_for_scan_complete(self) -> str:
+        """Wait for the Optoscan to report that the scan has completed."""
+
+        if self._serial is None:
+            raise RuntimeError("Serial port is not open")
+
+        response = self._serial.readline().decode("ascii")
+
+        if "ok" not in response:
             raise RuntimeError(
-                f"Unexpected Optoscan scan-completion response: "
-                f"{completion_response!r}"
+                f"Unexpected scan-completion response: {response!r}"
             )
+
+        return response
+
+
+    def run_scan(self) -> tuple[str, str]:
+        """Run a complete scan and wait for it to finish."""
+
+        start_response = self.start_scan()
+        completion_response = self.wait_for_scan_complete()
+
+        return start_response, completion_response
