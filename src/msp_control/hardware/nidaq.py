@@ -123,3 +123,49 @@ class NIDaq:
             number_of_samples_per_channel=samples,
             timeout=self.config.read_timeout,
         )
+
+    def _write_digital_line(
+        self,
+        physical_channel: str,
+        value: bool,
+    ) -> None:
+        """Write a boolean value to a digital output line."""
+
+        with nidaqmx.Task() as task:
+            task.do_channels.add_do_chan(physical_channel)
+            task.write(value)
+
+    def open_shutter(self) -> None:
+        """Open the PMT shutter."""
+
+        self._write_digital_line(
+            self.config.shutter_physical_channel,
+            True,
+        )
+
+
+    def close_shutter(self) -> None:
+        """Close the PMT shutter."""
+
+        self._write_digital_line(
+            self.config.shutter_physical_channel,
+            False,
+        )
+
+
+    def ir_on(self) -> None:
+        """Turn on the IR illumination."""
+
+        self._write_digital_line(
+            self.config.ir_physical_channel,
+            True,
+        )
+
+
+    def ir_off(self) -> None:
+        """Turn off the IR illumination."""
+
+        self._write_digital_line(
+            self.config.ir_physical_channel,
+            False,
+        )

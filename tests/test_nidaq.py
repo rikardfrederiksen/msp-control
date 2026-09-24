@@ -185,3 +185,49 @@ def test_read_sweep_requires_ai():
 
     with pytest.raises(RuntimeError):
         daq.read_sweep(181)
+
+def test_shutter_control():
+    daq = NIDaq(NIDaqConfig())
+
+    with patch.object(daq, "_write_digital_line") as write_line:
+        daq.open_shutter()
+        write_line.assert_called_with(
+            "Dev1/port0/line0",
+            True,
+        )
+
+        daq.close_shutter()
+        write_line.assert_called_with(
+            "Dev1/port0/line0",
+            False,
+        )
+
+
+def test_ir_control():
+    daq = NIDaq(NIDaqConfig())
+
+    with patch.object(daq, "_write_digital_line") as write_line:
+        daq.ir_on()
+        write_line.assert_called_with(
+            "Dev1/port0/line1",
+            True,
+        )
+
+        daq.ir_off()
+        write_line.assert_called_with(
+            "Dev1/port0/line1",
+            False,
+        )
+
+def test_write_digital_line():
+    with patch("msp_control.hardware.nidaq.nidaqmx.Task") as task_class:
+        task = MagicMock()
+        task_class.return_value.__enter__.return_value = task
+
+        daq = NIDaq(NIDaqConfig())
+        daq._write_digital_line("Dev1/port0/line0", True)
+
+        task.do_channels.add_do_chan.assert_called_once_with(
+            "Dev1/port0/line0"
+        )
+        task.write.assert_called_once_with(True)
