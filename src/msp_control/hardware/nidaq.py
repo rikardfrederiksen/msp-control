@@ -100,3 +100,26 @@ class NIDaq:
             trigger_source=self.config.start_trigger_source,
             trigger_edge=Edge.RISING,
         )
+
+    def start(self) -> None:
+        """Arm the analog-input task for acquisition."""
+
+        if self._ai_task is None:
+            raise RuntimeError("Analog input must be configured first")
+
+        self._ai_task.start()
+
+
+    def read_sweep(self, samples: int) -> list[float]:
+        """Read one complete wavelength sweep from the analog-input task."""
+
+        if self._ai_task is None:
+            raise RuntimeError("Analog input must be configured first")
+
+        if samples < 1:
+            raise ValueError("samples must be at least one")
+
+        return self._ai_task.read(
+            number_of_samples_per_channel=samples,
+            timeout=self.config.read_timeout,
+        )

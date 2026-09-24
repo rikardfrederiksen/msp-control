@@ -138,3 +138,50 @@ def test_configure_timing_rejects_invalid_sample_count():
             daq.configure_timing(0)
 
         daq.close()
+
+def test_start():
+    with patch("msp_control.hardware.nidaq.nidaqmx.Task") as task_class:
+        task = MagicMock()
+        task_class.return_value = task
+
+        daq = NIDaq(NIDaqConfig())
+        daq.configure_ai()
+        daq.start()
+
+        task.start.assert_called_once_with()
+
+        daq.close()
+
+
+def test_read_sweep():
+    with patch("msp_control.hardware.nidaq.nidaqmx.Task") as task_class:
+        task = MagicMock()
+        task_class.return_value = task
+        task.read.return_value = [0.1, 0.2, 0.3]
+
+        daq = NIDaq(NIDaqConfig())
+        daq.configure_ai()
+
+        data = daq.read_sweep(3)
+
+        task.read.assert_called_once_with(
+            number_of_samples_per_channel=3,
+            timeout=10.0,
+        )
+
+        assert data == [0.1, 0.2, 0.3]
+
+        daq.close()
+
+def test_start_requires_ai():
+    daq = NIDaq(NIDaqConfig())
+
+    with pytest.raises(RuntimeError):
+        daq.start()
+
+
+def test_read_sweep_requires_ai():
+    daq = NIDaq(NIDaqConfig())
+
+    with pytest.raises(RuntimeError):
+        daq.read_sweep(181)
