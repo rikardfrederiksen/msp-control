@@ -1,5 +1,8 @@
 from dataclasses import dataclass
 
+import nidaqmx
+from nidaqmx.constants import TerminalConfiguration
+
 
 @dataclass(frozen=True)
 class NIDaqConfig:
@@ -40,3 +43,29 @@ class NIDaqConfig:
     @property
     def ir_physical_channel(self) -> str:
         return f"{self.device}/{self.ir_line}"
+
+class NIDaq:
+    """Interface to the NI DAQ used by the MSP."""
+
+    def __init__(self, config: NIDaqConfig):
+        self.config = config
+        self._ai_task: nidaqmx.Task | None = None
+
+    def configure_ai(self) -> None:
+        """Create and configure the PMT analog-input task."""
+
+        self._ai_task = nidaqmx.Task()
+
+        self._ai_task.ai_channels.add_ai_voltage_chan(
+            self.config.pmt_physical_channel,
+            terminal_config=TerminalConfiguration.DIFF,
+            min_val=self.config.pmt_min_v,
+            max_val=self.config.pmt_max_v,
+        )
+
+    def close(self) -> None:
+        """Release DAQ resources."""
+
+        if self._ai_task is not None:
+            self._ai_task.close()
+            self._ai_task = None
