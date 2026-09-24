@@ -89,3 +89,14 @@ class NIDaq:
             sample_mode=AcquisitionType.FINITE,
             samps_per_chan=total_samples,
         )
+
+    def configure_start_trigger(self) -> None:
+        """Configure the Optoscan trigger as the acquisition start trigger."""
+
+        if self._ai_task is None:
+            raise RuntimeError("Analog input must be configured first")
+
+        self._ai_task.triggers.start_trigger.cfg_dig_edge_start_trig(
+            trigger_source=self.config.start_trigger_source,
+            trigger_edge=Edge.RISING,
+        )
