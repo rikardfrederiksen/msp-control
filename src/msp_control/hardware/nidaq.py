@@ -1,8 +1,11 @@
 from dataclasses import dataclass
 
 import nidaqmx
-from nidaqmx.constants import TerminalConfiguration
-
+from nidaqmx.constants import (
+    TerminalConfiguration,
+    AcquisitionType,
+    Edge,
+)
 
 @dataclass(frozen=True)
 class NIDaqConfig:
@@ -69,3 +72,20 @@ class NIDaq:
         if self._ai_task is not None:
             self._ai_task.close()
             self._ai_task = None
+
+    def configure_timing(self, total_samples: int) -> None:
+        """Configure finite acquisition using the external Optoscan clock."""
+
+        if self._ai_task is None:
+            raise RuntimeError("Analog input must be configured first")
+
+        if total_samples < 1:
+            raise ValueError("total_samples must be at least one")
+
+        self._ai_task.timing.cfg_samp_clk_timing(
+            rate=self.config.nominal_sample_rate,
+            source=self.config.sample_clock_source,
+            active_edge=Edge.RISING,
+            sample_mode=AcquisitionType.FINITE,
+            samps_per_chan=total_samples,
+        )
