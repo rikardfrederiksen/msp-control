@@ -3,7 +3,8 @@ from dataclasses import dataclass
 import numpy as np
 
 from msp_control.hardware.nidaq import NIDaq
-from msp_control.hardware.optoscan import OptoscanSerial, ScanConfig
+from msp_control.hardware.optoscan import OptoscanSerial
+from msp_control.config import ScanConfig
 
 
 @dataclass

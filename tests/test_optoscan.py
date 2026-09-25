@@ -1,9 +1,8 @@
 import pytest
-from msp_control.hardware.optoscan import (
-    OptoscanSerial,
-    ScanConfig,
-    build_config_commands,
-)
+from msp_control.hardware.optoscan import OptoscanSerial
+from msp_control.config import ScanConfig, build_config_commands
+
+import numpy as np
 
 class FakeSerial:
     def __init__(self, responses=None):
@@ -279,3 +278,23 @@ def test_wait_for_scan_complete_rejects_unexpected_response():
 
     with pytest.raises(RuntimeError, match="scan-completion"):
         optoscan.wait_for_scan_complete()
+
+def test_scan_config_wavelengths():
+    config = ScanConfig(
+        start_nm=360,
+        end_nm=720,
+        step_nm=2,
+        step_time_ms=2,
+        input_slit_nm=4,
+        output_slit_nm=4,
+        dark_scans=2,
+        data_scans=5,
+    )
+
+    expected = np.arange(360, 722, 2, dtype=float)
+
+    np.testing.assert_array_equal(
+        config.wavelengths,
+        expected,
+    )
+

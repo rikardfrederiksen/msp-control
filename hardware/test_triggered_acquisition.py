@@ -1,6 +1,7 @@
 from msp_control.acquisition import AcquisitionController
 from msp_control.hardware.nidaq import NIDaq, NIDaqConfig
-from msp_control.hardware.optoscan import OptoscanSerial, ScanConfig
+from msp_control.hardware.optoscan import OptoscanSerial
+from msp_control.config import ScanConfig
 
 
 def main():

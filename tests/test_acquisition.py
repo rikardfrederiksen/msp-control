@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, call
 import numpy as np
 
 from msp_control.acquisition import AcquisitionController
-from msp_control.hardware.optoscan import ScanConfig
+from msp_control.config import ScanConfig
 
 import pytest
 
