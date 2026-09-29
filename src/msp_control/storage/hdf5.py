@@ -386,6 +386,87 @@ def read_scan_group(
     )
 
 
+def update_scan_group(
+    filename: str | Path,
+    scan_group: ScanGroup,
+) -> None:
+    """Update an existing scan group in an MSP HDF5 file."""
+
+    with h5py.File(filename, "a") as h5:
+        _initialize_file(h5)
+
+        scan_groups_group = h5.require_group("scan_groups")
+        scans_group = h5.require_group("scans")
+        pending_group = h5.require_group("_pending")
+
+        group_name = f"group_{scan_group.scan_group_id:03d}"
+        final_path = f"/scan_groups/{group_name}"
+
+        new_name = f"update_{group_name}"
+        new_path = f"/_pending/{new_name}"
+
+        old_name = f"old_{group_name}"
+        old_path = f"/_pending/{old_name}"
+
+        if group_name not in scan_groups_group:
+            raise KeyError(
+                f"Scan group {scan_group.scan_group_id} does not exist"
+            )
+
+        for scan_index in scan_group.scan_indices:
+            scan_name = f"scan_{scan_index:03d}"
+
+            if scan_name not in scans_group:
+                raise ValueError(
+                    f"Scan {scan_index} does not exist in the HDF5 file"
+                )
+
+        # Remove stale temporary state from an earlier interrupted update.
+        if new_name in pending_group:
+            del pending_group[new_name]
+
+        if old_name in pending_group:
+            del pending_group[old_name]
+
+        try:
+            pending = pending_group.create_group(new_name)
+
+            pending.attrs["scan_group_id"] = (
+                scan_group.scan_group_id
+            )
+            pending.attrs["label"] = scan_group.label
+
+            pending.create_dataset(
+                "scan_indices",
+                data=scan_group.scan_indices,
+                dtype="i8",
+            )
+
+            # Preserve the old version before committing the replacement.
+            h5.move(final_path, old_path)
+
+            # Commit the new version.
+            h5.move(new_path, final_path)
+            h5.flush()
+
+            # The replacement succeeded, so the old version is no longer needed.
+            del h5[old_path]
+            h5.flush()
+
+        except Exception:
+            # Remove an uncommitted new version.
+            if new_path in h5:
+                del h5[new_path]
+
+            # If the old version was moved aside but the new version was not
+            # committed, restore the old version.
+            if old_path in h5 and final_path not in h5:
+                h5.move(old_path, final_path)
+
+            h5.flush()
+            raise
+
+
 def read_experiment(
     filename: str | Path,
 ) -> Experiment:

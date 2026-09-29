@@ -21,6 +21,7 @@ from msp_control.storage.hdf5 import (
     write_experiment,
     read_experiment,
     _commit_pending_group,
+    update_scan_group,
 )
 
 
@@ -851,3 +852,131 @@ def test_experiment_round_trip_with_ungrouped_scan(
     assert len(loaded.scans) == 1
     assert loaded.scans[0].scan_index == scan.scan_index
     assert len(loaded.scan_groups) == 0
+
+
+def test_update_scan_group(
+    tmp_path,
+    baseline,
+    scan,
+):
+    filename = tmp_path / "test.h5"
+
+    write_baseline(filename, baseline)
+    write_scan(filename, scan)
+
+    scan_group = ScanGroup(
+        scan_group_id=3,
+        label="control",
+        scan_indices=[],
+    )
+    write_scan_group(filename, scan_group)
+
+    scan_group.label = "dark adapted"
+    scan_group.scan_indices.append(scan.scan_index)
+
+    update_scan_group(filename, scan_group)
+
+    loaded = read_scan_group(filename, 3)
+
+    assert loaded.scan_group_id == 3
+    assert loaded.label == "dark adapted"
+    assert loaded.scan_indices == [scan.scan_index]
+
+
+def test_update_scan_group_rejects_missing_group(tmp_path):
+    filename = tmp_path / "test.h5"
+
+    scan_group = ScanGroup(
+        scan_group_id=3,
+        label="control",
+    )
+
+    with pytest.raises(
+        KeyError,
+        match="Scan group 3 does not exist",
+    ):
+        update_scan_group(filename, scan_group)
+
+
+def test_update_scan_group_rejects_missing_scan(
+    tmp_path,
+    baseline,
+    scan,
+):
+    filename = tmp_path / "test.h5"
+
+    write_baseline(filename, baseline)
+    write_scan(filename, scan)
+
+    original = ScanGroup(
+        scan_group_id=3,
+        label="control",
+        scan_indices=[scan.scan_index],
+    )
+    write_scan_group(filename, original)
+
+    updated = ScanGroup(
+        scan_group_id=3,
+        label="control",
+        scan_indices=[99],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Scan 99 does not exist in the HDF5 file",
+    ):
+        update_scan_group(filename, updated)
+
+
+def test_update_scan_group_restores_old_group_after_commit_failure(
+    tmp_path,
+    baseline,
+    scan,
+    monkeypatch,
+):
+    filename = tmp_path / "test.h5"
+
+    write_baseline(filename, baseline)
+    write_scan(filename, scan)
+
+    original = ScanGroup(
+        scan_group_id=3,
+        label="control",
+        scan_indices=[scan.scan_index],
+    )
+    write_scan_group(filename, original)
+
+    updated = ScanGroup(
+        scan_group_id=3,
+        label="dark adapted",
+        scan_indices=[],
+    )
+
+    original_move = h5py.File.move
+    move_count = 0
+
+    def failing_move(self, source, dest):
+        nonlocal move_count
+        move_count += 1
+
+        if move_count == 2:
+            raise RuntimeError("simulated commit failure")
+
+        return original_move(self, source, dest)
+
+    monkeypatch.setattr(
+        h5py.File,
+        "move",
+        failing_move,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="simulated commit failure",
+    ):
+        update_scan_group(filename, updated)
+
+    loaded = read_scan_group(filename, 3)
+
+    assert loaded.label == "control"
+    assert loaded.scan_indices == [scan.scan_index]

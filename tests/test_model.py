@@ -282,3 +282,231 @@ def test_scan_group_rejects_duplicate_scan_indices():
             label="control",
             scan_indices=[1, 4, 4],
         )
+
+
+def test_add_scan_group():
+    experiment = Experiment(
+        scans=[scan],
+    )
+
+    scan_group = ScanGroup(
+        scan_group_id=3,
+        label="control",
+        scan_indices=[scan.scan_index],
+    )
+
+    experiment.add_scan_group(scan_group)
+
+    assert len(experiment.scan_groups) == 1
+    assert experiment.scan_groups[0] is scan_group
+
+
+def test_add_scan_group_rejects_duplicate_id():
+    experiment = Experiment(
+        scans=[scan],
+    )
+
+    first = ScanGroup(
+        scan_group_id=3,
+        label="control",
+        scan_indices=[scan.scan_index],
+    )
+
+    second = ScanGroup(
+        scan_group_id=3,
+        label="other",
+        scan_indices=[],
+    )
+
+    experiment.add_scan_group(first)
+
+    with pytest.raises(
+        ValueError,
+        match="Scan group 3 already exists",
+    ):
+        experiment.add_scan_group(second)
+
+
+def test_add_scan_group_rejects_missing_scan():
+    experiment = Experiment()
+
+    scan_group = ScanGroup(
+        scan_group_id=3,
+        label="control",
+        scan_indices=[99],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Scan 99 does not exist",
+    ):
+        experiment.add_scan_group(scan_group)
+
+
+def test_add_empty_scan_group():
+    experiment = Experiment()
+
+    scan_group = ScanGroup(
+        scan_group_id=3,
+        label="control",
+        scan_indices=[],
+    )
+
+    experiment.add_scan_group(scan_group)
+
+    assert experiment.scan_groups == [scan_group]
+
+
+def test_get_scan_group():
+    experiment = Experiment(
+        scans=[scan],
+    )
+
+    scan_group = ScanGroup(
+        scan_group_id=3,
+        label="control",
+        scan_indices=[scan.scan_index],
+    )
+
+    experiment.add_scan_group(scan_group)
+
+    assert experiment.get_scan_group(3) is scan_group
+
+
+def test_get_scan_group_rejects_missing_id():
+    experiment = Experiment()
+
+    with pytest.raises(
+        KeyError,
+        match="Scan group 3 does not exist",
+    ):
+        experiment.get_scan_group(3)
+
+def test_add_scan_to_group():
+    experiment = Experiment(
+        scans=[scan],
+    )
+
+    scan_group = ScanGroup(
+        scan_group_id=3,
+        label="control",
+    )
+    experiment.add_scan_group(scan_group)
+
+    experiment.add_scan_to_group(
+        scan.scan_index,
+        3,
+    )
+
+    assert scan_group.scan_indices == [scan.scan_index]
+
+
+def test_add_scan_to_group_rejects_missing_scan():
+    experiment = Experiment()
+
+    scan_group = ScanGroup(
+        scan_group_id=3,
+        label="control",
+    )
+    experiment.add_scan_group(scan_group)
+
+    with pytest.raises(
+        KeyError,
+        match="Scan index 99 does not exist",
+    ):
+        experiment.add_scan_to_group(99, 3)
+
+
+def test_add_scan_to_group_rejects_duplicate():
+    experiment = Experiment(
+        scans=[scan],
+    )
+
+    scan_group = ScanGroup(
+        scan_group_id=3,
+        label="control",
+        scan_indices=[scan.scan_index],
+    )
+    experiment.add_scan_group(scan_group)
+
+    with pytest.raises(
+        ValueError,
+        match=f"Scan {scan.scan_index} already belongs",
+    ):
+        experiment.add_scan_to_group(
+            scan.scan_index,
+            3,
+        )
+
+def test_remove_scan_from_group():
+    experiment = Experiment(
+        scans=[scan],
+    )
+
+    scan_group = ScanGroup(
+        scan_group_id=3,
+        label="control",
+        scan_indices=[scan.scan_index],
+    )
+    experiment.add_scan_group(scan_group)
+
+    experiment.remove_scan_from_group(
+        scan.scan_index,
+        3,
+    )
+
+    assert scan_group.scan_indices == []
+
+
+def test_remove_scan_from_group_rejects_missing_membership():
+    experiment = Experiment(
+        scans=[scan],
+    )
+
+    scan_group = ScanGroup(
+        scan_group_id=3,
+        label="control",
+    )
+    experiment.add_scan_group(scan_group)
+
+    with pytest.raises(
+        ValueError,
+        match=f"Scan {scan.scan_index} does not belong",
+    ):
+        experiment.remove_scan_from_group(
+            scan.scan_index,
+            3,
+        )
+
+def test_rename_scan_group():
+    experiment = Experiment()
+
+    scan_group = ScanGroup(
+        scan_group_id=3,
+        label="control",
+    )
+    experiment.add_scan_group(scan_group)
+
+    experiment.rename_scan_group(
+        3,
+        "dark adapted control",
+    )
+
+    assert scan_group.label == "dark adapted control"
+
+
+def test_rename_scan_group_rejects_non_string_label():
+    experiment = Experiment()
+
+    scan_group = ScanGroup(
+        scan_group_id=3,
+        label="control",
+    )
+    experiment.add_scan_group(scan_group)
+
+    with pytest.raises(
+        TypeError,
+        match="label must be a string",
+    ):
+        experiment.rename_scan_group(3, 42)
+

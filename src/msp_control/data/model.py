@@ -177,3 +177,92 @@ class Experiment:
             scan.scan_index
             for scan in self.scans
         ) + 1
+
+    def add_scan_group(
+        self,
+        scan_group: ScanGroup,
+    ) -> None:
+        """Add a scan group to the experiment."""
+
+        if any(
+            existing.scan_group_id == scan_group.scan_group_id
+            for existing in self.scan_groups
+        ):
+            raise ValueError(
+                f"Scan group {scan_group.scan_group_id} already exists"
+            )
+
+        existing_scan_indices = {
+            scan.scan_index
+            for scan in self.scans
+        }
+
+        for scan_index in scan_group.scan_indices:
+            if scan_index not in existing_scan_indices:
+                raise ValueError(
+                    f"Scan {scan_index} does not exist"
+                )
+
+        self.scan_groups.append(scan_group)
+
+    def get_scan_group(
+        self,
+        scan_group_id: int,
+    ) -> ScanGroup:
+        """Return a scan group by its experiment-wide ID."""
+
+        for scan_group in self.scan_groups:
+            if scan_group.scan_group_id == scan_group_id:
+                return scan_group
+
+        raise KeyError(
+            f"Scan group {scan_group_id} does not exist"
+        )
+
+    def add_scan_to_group(
+        self,
+        scan_index: int,
+        scan_group_id: int,
+    ) -> None:
+        """Add an existing scan to an existing scan group."""
+
+        self.get_scan(scan_index)
+        scan_group = self.get_scan_group(scan_group_id)
+
+        if scan_index in scan_group.scan_indices:
+            raise ValueError(
+                f"Scan {scan_index} already belongs to "
+                f"scan group {scan_group_id}"
+            )
+
+        scan_group.scan_indices.append(scan_index)
+
+    def remove_scan_from_group(
+        self,
+        scan_index: int,
+        scan_group_id: int,
+    ) -> None:
+        """Remove a scan from a scan group."""
+
+        scan_group = self.get_scan_group(scan_group_id)
+
+        if scan_index not in scan_group.scan_indices:
+            raise ValueError(
+                f"Scan {scan_index} does not belong to "
+                f"scan group {scan_group_id}"
+            )
+
+        scan_group.scan_indices.remove(scan_index)
+
+    def rename_scan_group(
+        self,
+        scan_group_id: int,
+        label: str,
+    ) -> None:
+        """Change the label of a scan group."""
+
+        if not isinstance(label, str):
+            raise TypeError("label must be a string")
+
+        scan_group = self.get_scan_group(scan_group_id)
+        scan_group.label = label
