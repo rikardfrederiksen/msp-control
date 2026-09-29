@@ -36,6 +36,7 @@ def write_baseline(
         _initialize_file(h5)
 
         baselines_group = h5.require_group("baselines")
+        pending_group = h5.require_group("_pending")
 
         group_name = f"baseline_{baseline.baseline_index:03d}"
 
@@ -44,38 +45,64 @@ def write_baseline(
                 f"Baseline {baseline.baseline_index} already exists"
             )
 
-        baseline_group = baselines_group.create_group(group_name)
+        if group_name in pending_group:
+            del pending_group[group_name]
 
-        baseline_group.attrs["baseline_index"] = baseline.baseline_index
-        baseline_group.attrs["polarization"] = baseline.polarization.value
+        baseline_group = pending_group.create_group(group_name)
 
-        config_group = baseline_group.create_group("config")
-        _write_scan_config(config_group, baseline.config)
+        try:
+            baseline_group.attrs["baseline_index"] = baseline.baseline_index
+            baseline_group.attrs["polarization"] = baseline.polarization.value
 
-        data_group = baseline_group.create_group("data")
+            config_group = baseline_group.create_group("config")
+            _write_scan_config(config_group, baseline.config)
 
-        data_group.create_dataset("wavelength", data=baseline.wavelength)
-        data_group.create_dataset("raw_dark", data=baseline.raw_dark)
-        data_group.create_dataset(
-            "raw_transition",
-            data=baseline.raw_transition,
-        )
-        data_group.create_dataset(
-            "raw_baseline",
-            data=baseline.raw_baseline,
-        )
-        data_group.create_dataset("dark_mean", data=baseline.dark_mean)
-        data_group.create_dataset(
-            "baseline_mean",
-            data=baseline.baseline_mean,
-        )
-        data_group.create_dataset(
-            "baseline_corrected",
-            data=baseline.baseline_corrected,
-        )
+            data_group = baseline_group.create_group("data")
 
-        metadata_group = baseline_group.create_group("metadata")
-        _write_metadata(metadata_group, baseline.metadata)
+            data_group.create_dataset(
+                "wavelength",
+                data=baseline.wavelength,
+            )
+            data_group.create_dataset(
+                "raw_dark",
+                data=baseline.raw_dark,
+            )
+            data_group.create_dataset(
+                "raw_transition",
+                data=baseline.raw_transition,
+            )
+            data_group.create_dataset(
+                "raw_baseline",
+                data=baseline.raw_baseline,
+            )
+            data_group.create_dataset(
+                "dark_mean",
+                data=baseline.dark_mean,
+            )
+            data_group.create_dataset(
+                "baseline_mean",
+                data=baseline.baseline_mean,
+            )
+            data_group.create_dataset(
+                "baseline_corrected",
+                data=baseline.baseline_corrected,
+            )
+
+            metadata_group = baseline_group.create_group("metadata")
+            _write_metadata(metadata_group, baseline.metadata)
+
+            _commit_pending_group(
+                h5,
+                f"_pending/{group_name}",
+                f"baselines/{group_name}",
+            )
+
+        except Exception:
+            if group_name in pending_group:
+                del pending_group[group_name]
+                h5.flush()
+
+            raise
 
 
 def write_scan(
@@ -91,9 +118,11 @@ def write_scan(
 
         baselines_group = h5.require_group("baselines")
         scans_group = h5.require_group("scans")
+        pending_group = h5.require_group("_pending")
 
         baseline_name = f"baseline_{scan.baseline_index:03d}"
 
+        # Validate provenance first.
         if baseline_name not in baselines_group:
             raise ValueError(
                 f"Baseline {scan.baseline_index} does not exist "
@@ -102,56 +131,75 @@ def write_scan(
 
         group_name = f"scan_{scan.scan_index:03d}"
 
+        # Protect completed measurement.
         if group_name in scans_group:
             raise ScanAlreadyExistsError(
                 f"Scan {scan.scan_index} already exists"
             )
 
-        scan_group = scans_group.create_group(group_name)
+        # Discard an incomplete previous attempt.
+        if group_name in pending_group:
+            del pending_group[group_name]
 
-        scan_group.attrs["scan_index"] = scan.scan_index
-        scan_group.attrs["baseline_index"] = scan.baseline_index
-        scan_group.attrs["polarization"] = scan.polarization.value
+        scan_group = pending_group.create_group(group_name)
 
-        config_group = scan_group.create_group("config")
-        _write_scan_config(config_group, scan.config)
+        try:
+            scan_group.attrs["scan_index"] = scan.scan_index
+            scan_group.attrs["baseline_index"] = scan.baseline_index
+            scan_group.attrs["polarization"] = scan.polarization.value
 
-        data_group = scan_group.create_group("data")
-        data_group.create_dataset(
-            "wavelength",
-            data=scan.wavelength,
-        )
-        data_group.create_dataset(
-            "raw_dark",
-            data=scan.raw_dark,
-        )
-        data_group.create_dataset(
-            "raw_transition",
-            data=scan.raw_transition,
-        )
-        data_group.create_dataset(
-            "raw_specimen",
-            data=scan.raw_specimen,
-        )
-        data_group.create_dataset(
-            "dark_mean",
-            data=scan.dark_mean,
-        )
-        data_group.create_dataset(
-            "specimen_mean",
-            data=scan.specimen_mean,
-        )
-        data_group.create_dataset(
-            "specimen_corrected",
-            data=scan.specimen_corrected,
-        )
-        data_group.create_dataset(
-            "optical_density",
-            data=scan.optical_density,
-        )
+            config_group = scan_group.create_group("config")
+            _write_scan_config(config_group, scan.config)
 
-        metadata_group = scan_group.create_group("metadata")
-        _write_metadata(metadata_group, scan.metadata)
+            data_group = scan_group.create_group("data")
+            data_group.create_dataset(
+                "wavelength",
+                data=scan.wavelength,
+            )
+            data_group.create_dataset(
+                "raw_dark",
+                data=scan.raw_dark,
+            )
+            data_group.create_dataset(
+                "raw_transition",
+                data=scan.raw_transition,
+            )
+            data_group.create_dataset(
+                "raw_specimen",
+                data=scan.raw_specimen,
+            )
+            data_group.create_dataset(
+                "dark_mean",
+                data=scan.dark_mean,
+            )
+            data_group.create_dataset(
+                "specimen_mean",
+                data=scan.specimen_mean,
+            )
+            data_group.create_dataset(
+                "specimen_corrected",
+                data=scan.specimen_corrected,
+            )
+            data_group.create_dataset(
+                "optical_density",
+                data=scan.optical_density,
+            )
+
+            metadata_group = scan_group.create_group("metadata")
+            _write_metadata(metadata_group, scan.metadata)
+
+            _commit_pending_group(
+                h5,
+                f"_pending/{group_name}",
+                f"scans/{group_name}",
+            )
+
+        except Exception:
+            if group_name in pending_group:
+                del pending_group[group_name]
+                h5.flush()
+
+            raise
 
 
 def read_baseline(
@@ -161,6 +209,8 @@ def read_baseline(
     """Read a baseline from an MSP HDF5 file."""
 
     with h5py.File(filename, "r") as h5:
+        _validate_file(h5)
+        
         baseline_group = h5[
             f"baselines/baseline_{baseline_index:03d}"
         ]
@@ -199,6 +249,8 @@ def read_scan(
     """Read a specimen scan from an MSP HDF5 file."""
 
     with h5py.File(filename, "r") as h5:
+        _validate_file(h5)
+        
         scan_group = h5[
             f"scans/scan_{scan_index:03d}"
         ]
@@ -236,8 +288,6 @@ def read_scan(
         )
 
 
-
-
 def write_experiment_metadata(
     filename: str | Path,
     metadata: dict,
@@ -259,6 +309,8 @@ def read_experiment_metadata(
     """Read shared experiment metadata from an MSP HDF5 file."""
 
     with h5py.File(filename, "r") as h5:
+        _validate_file(h5)
+        
         metadata_group = h5["metadata"]
         return _read_metadata(metadata_group)
 
@@ -269,16 +321,7 @@ def write_scan_group(
 ) -> None:
     """Write scan-group membership to an MSP HDF5 file."""
 
-    scan_indices = [
-        scan.scan_index
-        for scan in scan_group.scans
-    ]
-
-    if len(scan_indices) != len(set(scan_indices)):
-        raise ValueError(
-            f"Scan group {scan_group.scan_group_id} "
-            "contains duplicate scan indices"
-        )
+    scan_indices = scan_group.scan_indices
 
     with h5py.File(filename, "a") as h5:
         _initialize_file(h5)
@@ -317,9 +360,11 @@ def read_scan_group(
     filename: str | Path,
     scan_group_id: int,
 ) -> ScanGroup:
-    """Read a scan group and its member scans from an MSP HDF5 file."""
+    """Read a scan group from an MSP HDF5 file."""
 
     with h5py.File(filename, "r") as h5:
+        _validate_file(h5)
+
         group = h5[
             f"scan_groups/group_{scan_group_id:03d}"
         ]
@@ -334,16 +379,67 @@ def read_scan_group(
             for index in group["scan_indices"][:]
         ]
 
-    scans = [
-        read_scan(filename, scan_index)
-        for scan_index in scan_indices
-    ]
-
     return ScanGroup(
         scan_group_id=stored_group_id,
         label=label,
-        scans=scans,
+        scan_indices=scan_indices,
     )
+
+
+def read_experiment(
+    filename: str | Path,
+) -> Experiment:
+    """Read an Experiment from an MSP HDF5 file."""
+
+    shared_metadata = read_experiment_metadata(filename)
+
+    experiment = Experiment(
+        shared_metadata=shared_metadata,
+    )
+
+    with h5py.File(filename, "r") as h5:
+        _validate_file(h5)
+
+        baseline_indices = [
+            int(group.attrs["baseline_index"])
+            for group in h5["baselines"].values()
+        ]
+
+        scan_indices = [
+            int(group.attrs["scan_index"])
+            for group in h5["scans"].values()
+        ]
+
+        scan_group_ids = []
+
+        if "scan_groups" in h5:
+            scan_group_ids = [
+                int(group.attrs["scan_group_id"])
+                for group in h5["scan_groups"].values()
+            ]
+
+    for baseline_index in baseline_indices:
+        baseline = read_baseline(
+            filename,
+            baseline_index,
+        )
+        experiment.add_baseline(baseline)
+
+    for scan_index in scan_indices:
+        scan = read_scan(
+            filename,
+            scan_index,
+        )
+        experiment.add_scan(scan)
+
+    for scan_group_id in scan_group_ids:
+        scan_group = read_scan_group(
+            filename,
+            scan_group_id,
+        )
+        experiment.scan_groups.append(scan_group)
+
+    return experiment
 
 
 def write_experiment(
@@ -360,13 +456,7 @@ def write_experiment(
     for baseline in experiment.baselines:
         write_baseline(filename, baseline)
 
-    scans = {
-        scan.scan_index: scan
-        for group in experiment.scan_groups
-        for scan in group.scans
-    }
-
-    for scan in scans.values():
+    for scan in experiment.scans:
         write_scan(filename, scan)
 
     for group in experiment.scan_groups:
@@ -414,13 +504,49 @@ def _validate_metadata(metadata: dict) -> None:
 
 
 def _initialize_file(h5: h5py.File) -> None:
-    """Initialize a new MSP HDF5 file."""
+    """Initialize or validate an MSP-control HDF5 file."""
+
+    if "format" in h5.attrs:
+        _validate_file(h5)
+        return
+
+    if len(h5) > 0 or len(h5.attrs) > 0:
+        raise ValueError(
+            "HDF5 file is not an MSP-control file"
+        )
+
+    h5.attrs["format"] = FORMAT_NAME
+    h5.attrs["format_version"] = FORMAT_VERSION
+    h5.attrs["software_version"] = SOFTWARE_VERSION
+
+
+def _validate_file(h5: h5py.File) -> None:
+    """Validate an existing MSP-control HDF5 file."""
 
     if "format" not in h5.attrs:
-        h5.attrs["format"] = FORMAT_NAME
-        h5.attrs["format_version"] = FORMAT_VERSION
-        h5.attrs["software_version"] = SOFTWARE_VERSION
+        raise ValueError(
+            "HDF5 file is not an MSP-control file"
+        )
 
+    if h5.attrs["format"] != FORMAT_NAME:
+        raise ValueError(
+            f"HDF5 file is not an MSP-control file: "
+            f"format={h5.attrs['format']!r}"
+        )
+
+    if "format_version" not in h5.attrs:
+        raise ValueError(
+            "MSP-control file has no format version"
+        )
+
+    version = int(h5.attrs["format_version"])
+
+    if version != FORMAT_VERSION:
+        raise ValueError(
+            f"Unsupported MSP-control format version: {version}"
+        )
+
+   
 def _write_scan_config(
     group: h5py.Group,
     config: ScanConfig,
@@ -452,40 +578,18 @@ def _read_scan_config(group: h5py.Group) -> ScanConfig:
     )
 
 
-def read_experiment(
-    filename: str | Path,
-) -> Experiment:
-    """Read an Experiment from an MSP HDF5 file."""
+def _commit_pending_group(
+    h5: h5py.File,
+    pending_path: str,
+    final_path: str,
+) -> None:
+    """Commit a completed pending group to its final location."""
 
-    shared_metadata = read_experiment_metadata(filename)
-
-    experiment = Experiment(
-        shared_metadata=shared_metadata,
-    )
-
-    with h5py.File(filename, "r") as h5:
-        baseline_indices = [
-            int(group.attrs["baseline_index"])
-            for group in h5["baselines"].values()
-        ]
-
-        scan_group_ids = [
-            int(group.attrs["scan_group_id"])
-            for group in h5["scan_groups"].values()
-        ]
-
-    for baseline_index in baseline_indices:
-        baseline = read_baseline(
-            filename,
-            baseline_index,
+    if final_path in h5:
+        raise ValueError(
+            f"Cannot commit pending group: {final_path!r} already exists"
         )
-        experiment.add_baseline(baseline)
 
-    for scan_group_id in scan_group_ids:
-        scan_group = read_scan_group(
-            filename,
-            scan_group_id,
-        )
-        experiment.scan_groups.append(scan_group)
+    h5.move(pending_path, final_path)
+    h5.flush()
 
-    return experiment

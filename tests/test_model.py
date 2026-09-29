@@ -89,7 +89,7 @@ scan = Scan(
 scan_group = ScanGroup(
     scan_group_id=0,
     label="control",
-    scans=[scan],
+    scan_indices=[0],
 )
 
 
@@ -99,23 +99,26 @@ experiment = Experiment(
         "animal": "test",
     },
     baselines=[baseline],
+    scans=[scan],
     scan_groups=[scan_group],
 )
 
 
 def test_experiment():
     assert len(experiment.baselines) == 1
+    assert len(experiment.scans) == 1
     assert len(experiment.scan_groups) == 1
-    assert len(experiment.scan_groups[0].scans) == 1
 
     assert experiment.baselines[0].baseline_index == 0
-    assert experiment.scan_groups[0].scans[0].baseline_index == 0
+    assert experiment.scans[0].baseline_index == 0
 
     assert experiment.baselines[0].baseline_corrected.shape == wavelength.shape
-    assert experiment.scan_groups[0].scans[0].optical_density.shape == wavelength.shape
+    assert experiment.scans[0].optical_density.shape == wavelength.shape
 
     assert experiment.baselines[0].config == config
-    assert experiment.scan_groups[0].scans[0].config == config
+    assert experiment.scans[0].config == config
+
+    assert experiment.scan_groups[0].scan_indices == [0]
 
 def test_add_baseline():
     experiment = Experiment()
@@ -209,100 +212,40 @@ def test_next_baseline_index():
 def test_add_scan():
     experiment = Experiment()
 
-    experiment.add_scan(scan, scan_group_id=0)
+    experiment.add_scan(scan)
 
-    assert len(experiment.scan_groups) == 1
-    assert experiment.scan_groups[0].scan_group_id == 0
-    assert len(experiment.scan_groups[0].scans) == 1
-    assert experiment.scan_groups[0].scans[0] is scan
+    assert experiment.scans == [scan]
 
 
 def test_get_scan():
     experiment = Experiment()
-    experiment.add_scan(scan, scan_group_id=0)
 
-    result = experiment.get_scan(scan.scan_index)
+    experiment.add_scan(scan)
+
+    result = experiment.get_scan(0)
 
     assert result is scan
 
 
-def test_add_scan_rejects_duplicate_index_across_groups():
+def test_add_scan_rejects_duplicate_index():
     experiment = Experiment()
 
-    experiment.add_scan(scan, scan_group_id=0)
+    experiment.add_scan(scan)
 
     with pytest.raises(
         ValueError,
         match=f"Scan index {scan.scan_index} already exists",
     ):
-        experiment.add_scan(scan, scan_group_id=1)
+        experiment.add_scan(scan)
 
 def test_next_scan_index():
     experiment = Experiment()
 
     assert experiment.next_scan_index == 0
 
-    scan_0 = scan
+    experiment.add_scan(scan)
 
-    scan_4 = Scan(
-        scan_index=4,
-        baseline_index=scan.baseline_index,
-        polarization=scan.polarization,
-        config=scan.config,
-        wavelength=scan.wavelength,
-        raw_dark=scan.raw_dark,
-        raw_transition=raw_transition,
-        raw_specimen=scan.raw_specimen,
-        dark_mean=scan.dark_mean,
-        specimen_mean=scan.specimen_mean,
-        specimen_corrected=scan.specimen_corrected,
-        optical_density=scan.optical_density,
-    )
-
-    experiment.add_scan(scan_0, scan_group_id=0)
-    experiment.add_scan(scan_4, scan_group_id=1)
-
-    assert experiment.next_scan_index == 5
-
-
-def test_add_scan_to_existing_group():
-    experiment = Experiment()
-
-    scan_0 = scan
-
-    scan_1 = Scan(
-        scan_index=1,
-        baseline_index=scan.baseline_index,
-        polarization=scan.polarization,
-        config=scan.config,
-        wavelength=scan.wavelength,
-        raw_dark=scan.raw_dark,
-        raw_transition=raw_transition,
-        raw_specimen=scan.raw_specimen,
-        dark_mean=scan.dark_mean,
-        specimen_mean=scan.specimen_mean,
-        specimen_corrected=scan.specimen_corrected,
-        optical_density=scan.optical_density,
-    )
-
-    experiment.add_scan(scan_0, scan_group_id=0)
-    experiment.add_scan(scan_1, scan_group_id=0)
-
-    assert len(experiment.scan_groups) == 1
-    assert len(experiment.scan_groups[0].scans) == 2
-    assert experiment.scan_groups[0].scans[0] is scan_0
-    assert experiment.scan_groups[0].scans[1] is scan_1
-
-
-def test_scan_group():
-    group = ScanGroup(
-        scan_group_id=3,
-        label="control",
-    )
-
-    assert group.scan_group_id == 3
-    assert group.label == "control"
-    assert group.scans == []
+    assert experiment.next_scan_index == 1
 
 
 def test_scan_group_rejects_string_id():
@@ -313,5 +256,29 @@ def test_scan_group_rejects_string_id():
         ScanGroup(
             scan_group_id="control",
             label="control",
+            scan_indices=[1,5],
         )
 
+
+def test_scan_group():
+    group = ScanGroup(
+        scan_group_id=3,
+        label="control",
+        scan_indices=[1, 4, 7],
+    )
+
+    assert group.scan_group_id == 3
+    assert group.label == "control"
+    assert group.scan_indices == [1, 4, 7]
+
+
+def test_scan_group_rejects_duplicate_scan_indices():
+    with pytest.raises(
+        ValueError,
+        match="cannot contain duplicates",
+    ):
+        ScanGroup(
+            scan_group_id=3,
+            label="control",
+            scan_indices=[1, 4, 4],
+        )

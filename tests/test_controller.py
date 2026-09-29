@@ -127,7 +127,6 @@ def test_acquire_scan():
         config=config,
         polarization=Polarization.TRANSVERSE,
         baseline_index=baseline.baseline_index,
-        scan_group_id=0,
     )
 
     assert scan.scan_index == 0
@@ -135,13 +134,10 @@ def test_acquire_scan():
     assert scan.polarization is Polarization.TRANSVERSE
     assert scan.config is config
 
-    assert len(experiment.scan_groups) == 1
+    assert len(experiment.scans) == 1
+    assert experiment.scans[0] is scan
 
-    group = experiment.scan_groups[0]
-
-    assert group.scan_group_id == 0
-    assert len(group.scans) == 1
-    assert group.scans[0] is scan
+    assert len(experiment.scan_groups) == 0
 
     np.testing.assert_allclose(
         scan.optical_density,
@@ -176,7 +172,6 @@ def test_acquire_scan_rejects_missing_baseline_before_acquisition():
             config=config,
             polarization=Polarization.TRANSVERSE,
             baseline_index=7,
-            scan_group_id=0,
         )
 
     assert acquisition.acquire_count == 0
@@ -218,7 +213,6 @@ def test_acquire_scan_rejects_wrong_polarization_before_acquisition():
             config=config,
             polarization=Polarization.LONGITUDINAL,
             baseline_index=baseline.baseline_index,
-            scan_group_id=0,
         )
 
     assert acquisition.acquire_count == acquisitions_before
@@ -271,7 +265,6 @@ def test_acquire_scan_rejects_incompatible_config_before_acquisition():
             config=scan_config,
             polarization=Polarization.TRANSVERSE,
             baseline_index=baseline.baseline_index,
-            scan_group_id=0,
         )
 
     assert acquisition.acquire_count == acquisitions_before

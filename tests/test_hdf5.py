@@ -20,6 +20,7 @@ from msp_control.storage.hdf5 import (
     read_scan_group,
     write_experiment,
     read_experiment,
+    _commit_pending_group,
 )
 
 
@@ -157,6 +158,11 @@ def test_write_baseline(tmp_path):
             group["data/baseline_corrected"][:],
             baseline.baseline_corrected,
         )
+
+    with h5py.File(filename, "r") as h5:
+        assert "baselines/baseline_007" in h5
+        assert "_pending/baseline_007" not in h5
+
 
 def test_baseline_round_trip(tmp_path):
     config = ScanConfig(
@@ -427,21 +433,27 @@ def test_experiment_metadata_round_trip(tmp_path):
 def test_write_scan_group(tmp_path, baseline, scan):
     filename = tmp_path / "test.h5"
 
-    scan_group = ScanGroup(
-        scan_group_id=3,
-        label="control",
-        scans=[scan],
-    )
-
     write_baseline(filename, baseline)
     write_scan(filename, scan)
+
+    scan_group = ScanGroup(
+        scan_group_id=0,
+        label="control",
+        scan_indices=[scan.scan_index],
+    )
+
     write_scan_group(filename, scan_group)
 
     with h5py.File(filename, "r") as h5:
-        group = h5["scan_groups/group_003"]
+        group = h5[
+            f"scan_groups/group_{scan_group.scan_group_id:03d}"
+        ]
 
-        assert group.attrs["scan_group_id"] == 3
-        assert group.attrs["label"] == "control"
+        assert (
+            group.attrs["scan_group_id"]
+            == scan_group.scan_group_id
+        )
+        assert group.attrs["label"] == scan_group.label
 
         np.testing.assert_array_equal(
             group["scan_indices"][:],
@@ -452,15 +464,16 @@ def test_write_scan_group(tmp_path, baseline, scan):
 def test_scan_group_round_trip(tmp_path, baseline, scan):
     filename = tmp_path / "test.h5"
 
-    scan_group = ScanGroup(
-        scan_group_id=3,
-        label="control",
-        scans=[scan],
-    )
-
-    # The scan itself must exist independently in /scans.
+    # Referenced scans must already exist in /scans.
     write_baseline(filename, baseline)
     write_scan(filename, scan)
+
+    scan_group = ScanGroup(
+        scan_group_id=0,
+        label="control",
+        scan_indices=[scan.scan_index],
+    )
+
     write_scan_group(filename, scan_group)
 
     loaded = read_scan_group(
@@ -470,38 +483,30 @@ def test_scan_group_round_trip(tmp_path, baseline, scan):
 
     assert loaded.scan_group_id == scan_group.scan_group_id
     assert loaded.label == scan_group.label
-    assert len(loaded.scans) == 1
+    assert loaded.scan_indices == scan_group.scan_indices
 
-    loaded_scan = loaded.scans[0]
 
-    assert loaded_scan.scan_index == scan.scan_index
-    assert loaded_scan.baseline_index == scan.baseline_index
-
-    np.testing.assert_array_equal(
-        loaded_scan.optical_density,
-        scan.optical_density,
-    )
-
-def test_write_scan_group_rejects_missing_scan(tmp_path, baseline, scan):
+def test_write_scan_group_rejects_missing_scan(tmp_path):
     filename = tmp_path / "test.h5"
 
     scan_group = ScanGroup(
         scan_group_id=3,
         label="control",
-        scans=[scan],
+        scan_indices=[99],
     )
 
     with pytest.raises(
         ValueError,
-        match=f"Scan {scan.scan_index} does not exist",
+        match="Scan 99 does not exist in the HDF5 file",
     ):
         write_scan_group(filename, scan_group)
 
-    with h5py.File(filename, "r") as h5:
-        assert "group_003" not in h5["scan_groups"]
 
-
-def test_write_scan_group_rejects_duplicate_scan(tmp_path, baseline, scan):
+def test_write_scan_group_rejects_duplicate_id(
+    tmp_path,
+    baseline,
+    scan,
+):
     filename = tmp_path / "test.h5"
 
     write_baseline(filename, baseline)
@@ -510,29 +515,7 @@ def test_write_scan_group_rejects_duplicate_scan(tmp_path, baseline, scan):
     scan_group = ScanGroup(
         scan_group_id=3,
         label="control",
-        scans=[scan, scan],
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="contains duplicate scan indices",
-    ):
-        write_scan_group(filename, scan_group)
-
-    with h5py.File(filename, "r") as h5:
-        assert "scan_groups/group_003" not in h5
-
-
-def test_write_scan_group_rejects_duplicate_id(tmp_path, baseline, scan):
-    filename = tmp_path / "test.h5"
-
-    write_baseline(filename, baseline)
-    write_scan(filename, scan)
-
-    scan_group = ScanGroup(
-        scan_group_id=3,
-        label="control",
-        scans=[scan],
+        scan_indices=[scan.scan_index],
     )
 
     write_scan_group(filename, scan_group)
@@ -542,13 +525,6 @@ def test_write_scan_group_rejects_duplicate_id(tmp_path, baseline, scan):
         match="Scan group 3 already exists",
     ):
         write_scan_group(filename, scan_group)
-
-    loaded = read_scan_group(filename, 3)
-
-    assert loaded.scan_group_id == 3
-    assert loaded.label == "control"
-    assert len(loaded.scans) == 1
-    assert loaded.scans[0].scan_index == scan.scan_index
 
 
 def test_write_experiment(tmp_path, baseline, scan):
@@ -562,12 +538,14 @@ def test_write_experiment(tmp_path, baseline, scan):
     )
 
     experiment.add_baseline(baseline)
-    experiment.add_scan(
-        scan,
-        scan_group_id=3,
-    )
+    experiment.add_scan(scan)
 
-    experiment.scan_groups[0].label = "control"
+    scan_group = ScanGroup(
+        scan_group_id=3,
+        label="control",
+        scan_indices=[scan.scan_index],
+    )
+    experiment.scan_groups.append(scan_group)
 
     write_experiment(filename, experiment)
 
@@ -601,11 +579,14 @@ def test_experiment_round_trip(tmp_path, baseline, scan):
     )
 
     experiment.add_baseline(baseline)
-    experiment.add_scan(
-        scan,
+    experiment.add_scan(scan)
+
+    scan_group = ScanGroup(
         scan_group_id=3,
+        label="control",
+        scan_indices=[scan.scan_index],
     )
-    experiment.scan_groups[0].label = "control"
+    experiment.scan_groups.append(scan_group)
 
     write_experiment(filename, experiment)
 
@@ -613,6 +594,7 @@ def test_experiment_round_trip(tmp_path, baseline, scan):
 
     assert loaded.shared_metadata == experiment.shared_metadata
 
+    # Baseline
     assert len(loaded.baselines) == 1
     loaded_baseline = loaded.baselines[0]
 
@@ -624,14 +606,9 @@ def test_experiment_round_trip(tmp_path, baseline, scan):
         baseline.baseline_corrected,
     )
 
-    assert len(loaded.scan_groups) == 1
-    loaded_group = loaded.scan_groups[0]
-
-    assert loaded_group.scan_group_id == 3
-    assert loaded_group.label == "control"
-    assert len(loaded_group.scans) == 1
-
-    loaded_scan = loaded_group.scans[0]
+    # Scan
+    assert len(loaded.scans) == 1
+    loaded_scan = loaded.scans[0]
 
     assert loaded_scan.scan_index == scan.scan_index
     assert loaded_scan.baseline_index == scan.baseline_index
@@ -640,6 +617,15 @@ def test_experiment_round_trip(tmp_path, baseline, scan):
         loaded_scan.optical_density,
         scan.optical_density,
     )
+
+    # Scan group
+    assert len(loaded.scan_groups) == 1
+    loaded_group = loaded.scan_groups[0]
+
+    assert loaded_group.scan_group_id == 3
+    assert loaded_group.label == "control"
+    assert loaded_group.scan_indices == [scan.scan_index]
+
 
 def test_write_scan_rejects_missing_baseline(tmp_path, scan):
     filename = tmp_path / "test.h5"
@@ -652,3 +638,216 @@ def test_write_scan_rejects_missing_baseline(tmp_path, scan):
 
     with h5py.File(filename, "r") as h5:
         assert f"scans/scan_{scan.scan_index:03d}" not in h5
+
+
+def test_write_rejects_non_msp_hdf5_file(
+    tmp_path,
+    baseline,
+):
+    filename = tmp_path / "other.h5"
+
+    with h5py.File(filename, "w") as h5:
+        h5.attrs["description"] = "Some unrelated HDF5 file"
+        h5.create_dataset(
+            "important_data",
+            data=np.array([1, 2, 3]),
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="not an MSP-control file",
+    ):
+        write_baseline(filename, baseline)
+
+    # Make sure the rejected file was not modified.
+    with h5py.File(filename, "r") as h5:
+        assert h5.attrs["description"] == "Some unrelated HDF5 file"
+        assert "important_data" in h5
+        assert "format" not in h5.attrs
+        assert "baselines" not in h5
+
+
+def test_read_rejects_non_msp_hdf5_file(tmp_path):
+    filename = tmp_path / "other.h5"
+
+    with h5py.File(filename, "w") as h5:
+        h5.create_group("baselines")
+
+    with pytest.raises(
+        ValueError,
+        match="not an MSP-control file",
+    ):
+        read_baseline(filename, baseline_index=7)
+
+
+def test_read_rejects_wrong_format(tmp_path):
+    filename = tmp_path / "other.h5"
+
+    with h5py.File(filename, "w") as h5:
+        h5.attrs["format"] = "some-other-format"
+        h5.attrs["format_version"] = 1
+
+    with pytest.raises(
+        ValueError,
+        match="not an MSP-control file",
+    ):
+        read_baseline(filename, baseline_index=7)
+
+
+def test_read_rejects_unsupported_format_version(tmp_path):
+    filename = tmp_path / "future.h5"
+
+    with h5py.File(filename, "w") as h5:
+        h5.attrs["format"] = "msp-control"
+        h5.attrs["format_version"] = 999
+        h5.attrs["software_version"] = "99.0.0"
+
+    with pytest.raises(
+        ValueError,
+        match="Unsupported MSP-control format version: 999",
+    ):
+        read_baseline(filename, baseline_index=7)
+
+
+def test_read_rejects_missing_format_version(tmp_path):
+    filename = tmp_path / "malformed.h5"
+
+    with h5py.File(filename, "w") as h5:
+        h5.attrs["format"] = "msp-control"
+
+    with pytest.raises(
+        ValueError,
+        match="MSP-control file has no format version",
+    ):
+        read_baseline(filename, baseline_index=7)
+
+
+def test_commit_pending_group(tmp_path):
+    filename = tmp_path / "experiment.h5"
+
+    with h5py.File(filename, "w") as h5:
+        pending = h5.create_group("_pending/scan_007")
+        pending.create_dataset(
+            "data",
+            data=np.array([1.0, 2.0, 3.0]),
+        )
+
+        _commit_pending_group(
+            h5,
+            "_pending/scan_007",
+            "scans/scan_007",
+        )
+
+        assert "_pending/scan_007" not in h5
+        assert "scans/scan_007" in h5
+
+        np.testing.assert_array_equal(
+            h5["scans/scan_007/data"][:],
+            np.array([1.0, 2.0, 3.0]),
+        )
+
+
+def test_commit_pending_group_rejects_existing_destination(
+    tmp_path,
+):
+    filename = tmp_path / "experiment.h5"
+
+    with h5py.File(filename, "w") as h5:
+        h5.create_group("_pending/scan_007")
+        h5.create_group("scans/scan_007")
+
+        with pytest.raises(
+            ValueError,
+            match="already exists",
+        ):
+            _commit_pending_group(
+                h5,
+                "_pending/scan_007",
+                "scans/scan_007",
+            )
+
+        assert "_pending/scan_007" in h5
+        assert "scans/scan_007" in h5
+
+
+def test_write_baseline_cleans_up_after_write_failure(
+    tmp_path,
+    baseline,
+    monkeypatch,
+):
+    filename = tmp_path / "experiment.h5"
+
+    def fail_write(*args, **kwargs):
+        raise RuntimeError("Simulated write failure")
+
+    monkeypatch.setattr(
+        "msp_control.storage.hdf5._write_scan_config",
+        fail_write,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Simulated write failure",
+    ):
+        write_baseline(filename, baseline)
+
+    with h5py.File(filename, "r") as h5:
+        group_name = f"baseline_{baseline.baseline_index:03d}"
+
+        assert f"baselines/{group_name}" not in h5
+        assert f"_pending/{group_name}" not in h5
+
+
+def test_write_scan_cleans_up_after_write_failure(
+    tmp_path,
+    baseline,
+    scan,
+    monkeypatch,
+):
+    filename = tmp_path / "experiment.h5"
+
+    write_baseline(filename, baseline)
+
+    def fail_write(*args, **kwargs):
+        raise RuntimeError("Simulated write failure")
+
+    monkeypatch.setattr(
+        "msp_control.storage.hdf5._write_scan_config",
+        fail_write,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Simulated write failure",
+    ):
+        write_scan(filename, scan)
+
+    with h5py.File(filename, "r") as h5:
+        group_name = f"scan_{scan.scan_index:03d}"
+
+        assert f"scans/{group_name}" not in h5
+        assert f"_pending/{group_name}" not in h5
+
+        # The already committed baseline must be untouched.
+        baseline_name = f"baseline_{baseline.baseline_index:03d}"
+        assert f"baselines/{baseline_name}" in h5
+
+
+def test_experiment_round_trip_with_ungrouped_scan(
+    tmp_path,
+    baseline,
+    scan,
+):
+    filename = tmp_path / "test.h5"
+
+    experiment = Experiment()
+    experiment.add_baseline(baseline)
+    experiment.add_scan(scan)
+
+    write_experiment(filename, experiment)
+
+    loaded = read_experiment(filename)
+
+    assert len(loaded.scans) == 1
+    assert loaded.scans[0].scan_index == scan.scan_index
+    assert len(loaded.scan_groups) == 0

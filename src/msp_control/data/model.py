@@ -56,11 +56,9 @@ class Scan:
 
 @dataclass
 class ScanGroup:
-    """A collection of related specimen scans."""
-
     scan_group_id: int
     label: str = ""
-    scans: list[Scan] = field(default_factory=list)
+    scan_indices: list[int] = field(default_factory=list)
 
     def __post_init__(self):
         if not isinstance(self.scan_group_id, int):
@@ -69,6 +67,17 @@ class ScanGroup:
         if not isinstance(self.label, str):
             raise TypeError("label must be a string")
 
+        if not all(
+            isinstance(index, int)
+            for index in self.scan_indices
+        ):
+            raise TypeError("scan_indices must contain integers")
+
+        if len(self.scan_indices) != len(set(self.scan_indices)):
+            raise ValueError(
+                "scan_indices cannot contain duplicates"
+            )
+
 
 @dataclass
 class Experiment:
@@ -76,6 +85,7 @@ class Experiment:
 
     shared_metadata: dict[str, Any] = field(default_factory=dict)
     baselines: list[Baseline] = field(default_factory=list)
+    scans: list[Scan] = field(default_factory=list)
     scan_groups: list[ScanGroup] = field(default_factory=list)
 
     def add_baseline(self, baseline: Baseline) -> None:
@@ -132,35 +142,25 @@ class Experiment:
     def add_scan(
         self,
         scan: Scan,
-        scan_group_id: int,
     ) -> None:
-        """Add a scan to a scan group."""
+        """Add a scan to the experiment."""
 
         if any(
             existing.scan_index == scan.scan_index
-            for group in self.scan_groups
-            for existing in group.scans
+            for existing in self.scans
         ):
             raise ValueError(
                 f"Scan index {scan.scan_index} already exists"
             )
 
-        for group in self.scan_groups:
-            if group.scan_group_id == scan_group_id:
-                group.scans.append(scan)
-                return
-
-        group = ScanGroup(scan_group_id=scan_group_id)
-        group.scans.append(scan)
-        self.scan_groups.append(group)
+        self.scans.append(scan)
 
     def get_scan(self, scan_index: int) -> Scan:
         """Return a scan by its experiment-wide index."""
 
-        for group in self.scan_groups:
-            for scan in group.scans:
-                if scan.scan_index == scan_index:
-                    return scan
+        for scan in self.scans:
+            if scan.scan_index == scan_index:
+                return scan
 
         raise KeyError(
             f"Scan index {scan_index} does not exist"
@@ -170,13 +170,10 @@ class Experiment:
     def next_scan_index(self) -> int:
         """Return the next available experiment-wide scan index."""
 
-        indices = [
-            scan.scan_index
-            for group in self.scan_groups
-            for scan in group.scans
-        ]
-
-        if not indices:
+        if not self.scans:
             return 0
 
-        return max(indices) + 1
+        return max(
+            scan.scan_index
+            for scan in self.scans
+        ) + 1

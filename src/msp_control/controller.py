@@ -42,7 +42,6 @@ class MSPController:
         config: ScanConfig,
         polarization: Polarization,
         baseline_index: int,
-        scan_group_id: int,
     ) -> Scan:
         """Acquire, process, and add a specimen scan to the experiment."""
 
@@ -71,9 +70,5 @@ class MSPController:
             polarization=polarization,
         )
 
-        self.experiment.add_scan(
-            scan,
-            scan_group_id=scan_group_id,
-        )
-
+        self.experiment.add_scan(scan)
         return scan
