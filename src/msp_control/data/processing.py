@@ -14,6 +14,7 @@ def process_baseline(
     """Process a raw acquisition into an MSP baseline."""
 
     raw_dark = np.stack(acquisition.dark)
+    raw_transition = np.asarray(acquisition.transition)
     raw_baseline = np.stack(acquisition.data)
 
     dark_mean = np.mean(raw_dark, axis=0)
@@ -27,6 +28,7 @@ def process_baseline(
         config=config,
         wavelength=config.wavelengths,
         raw_dark=raw_dark,
+        raw_transition=raw_transition,
         raw_baseline=raw_baseline,
         dark_mean=dark_mean,
         baseline_mean=baseline_mean,
@@ -55,6 +57,7 @@ def process_scan(
         )
    
     raw_dark = np.stack(acquisition.dark)
+    raw_transition = np.asarray(acquisition.transition)
     raw_specimen = np.stack(acquisition.data)
 
     dark_mean = np.mean(raw_dark, axis=0)
@@ -73,6 +76,7 @@ def process_scan(
         config=config,
         wavelength=config.wavelengths,
         raw_dark=raw_dark,
+        raw_transition=raw_transition,
         raw_specimen=raw_specimen,
         dark_mean=dark_mean,
         specimen_mean=specimen_mean,

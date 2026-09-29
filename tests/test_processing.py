@@ -76,6 +76,11 @@ def test_process_baseline():
         [10.0, 10.0, 10.0],
     )
 
+    np.testing.assert_array_equal(
+        baseline.raw_transition,
+        [99.0, 99.0, 99.0],
+    )
+
     assert baseline.baseline_index == 7
 
 def test_process_scan():
@@ -173,6 +178,12 @@ def test_process_scan():
         scan.optical_density,
         [1.0, 1.0, 1.0],
     )
+
+    np.testing.assert_array_equal(
+        scan.raw_transition,
+        [99.0, 99.0, 99.0],
+    )
+    
 def test_process_scan_rejects_mismatched_polarization():
     config = ScanConfig(
         start_nm=500,

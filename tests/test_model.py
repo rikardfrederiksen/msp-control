@@ -28,6 +28,7 @@ wavelength = config.wavelengths
 # Fake baseline acquisition:
 # 2 dark sweeps and 5 illuminated sweeps
 raw_dark_baseline = np.random.normal(0.1, 0.005, (2, len(wavelength)))
+raw_transition = np.array([99.0, 99.0, 99.0])
 raw_baseline = np.random.normal(5.0, 0.05, (5, len(wavelength)))
 
 dark_baseline = np.mean(raw_dark_baseline, axis=0)
@@ -40,6 +41,7 @@ baseline = Baseline(
     config=config,
     wavelength=wavelength,
     raw_dark=raw_dark_baseline,
+    raw_transition=raw_transition,
     raw_baseline=raw_baseline,
     dark_mean=dark_baseline,
     baseline_mean=baseline_mean,
@@ -53,6 +55,7 @@ baseline = Baseline(
 
 # Fake specimen acquisition
 raw_dark_specimen = np.random.normal(0.1, 0.005, (2, len(wavelength)))
+raw_transition = np.array([99.0, 99.0, 99.0])
 raw_specimen = np.random.normal(3.0, 0.05, (5, len(wavelength)))
 
 dark_specimen = np.mean(raw_dark_specimen, axis=0)
@@ -70,6 +73,7 @@ scan = Scan(
     config=config,
     wavelength=wavelength,
     raw_dark=raw_dark_specimen,
+    raw_transition=raw_transition,
     raw_specimen=raw_specimen,
     dark_mean=dark_specimen,
     specimen_mean=specimen_mean,
@@ -84,6 +88,7 @@ scan = Scan(
 
 scan_group = ScanGroup(
     scan_group_id=0,
+    label="control",
     scans=[scan],
 )
 
@@ -150,6 +155,7 @@ def test_get_baselines_filters_by_polarization():
         config=baseline.config,
         wavelength=baseline.wavelength,
         raw_dark=baseline.raw_dark,
+        raw_transition=raw_transition,
         raw_baseline=baseline.raw_baseline,
         dark_mean=baseline.dark_mean,
         baseline_mean=baseline.baseline_mean,
@@ -188,6 +194,7 @@ def test_next_baseline_index():
         config=baseline.config,
         wavelength=baseline.wavelength,
         raw_dark=baseline.raw_dark,
+        raw_transition=raw_transition,
         raw_baseline=baseline.raw_baseline,
         dark_mean=baseline.dark_mean,
         baseline_mean=baseline.baseline_mean,
@@ -212,7 +219,7 @@ def test_add_scan():
 
 def test_get_scan():
     experiment = Experiment()
-    experiment.add_scan(scan, scan_group_id="cell_1")
+    experiment.add_scan(scan, scan_group_id=0)
 
     result = experiment.get_scan(scan.scan_index)
 
@@ -222,13 +229,13 @@ def test_get_scan():
 def test_add_scan_rejects_duplicate_index_across_groups():
     experiment = Experiment()
 
-    experiment.add_scan(scan, scan_group_id="cell_1")
+    experiment.add_scan(scan, scan_group_id=0)
 
     with pytest.raises(
         ValueError,
         match=f"Scan index {scan.scan_index} already exists",
     ):
-        experiment.add_scan(scan, scan_group_id="cell_2")
+        experiment.add_scan(scan, scan_group_id=1)
 
 def test_next_scan_index():
     experiment = Experiment()
@@ -244,6 +251,7 @@ def test_next_scan_index():
         config=scan.config,
         wavelength=scan.wavelength,
         raw_dark=scan.raw_dark,
+        raw_transition=raw_transition,
         raw_specimen=scan.raw_specimen,
         dark_mean=scan.dark_mean,
         specimen_mean=scan.specimen_mean,
@@ -251,10 +259,11 @@ def test_next_scan_index():
         optical_density=scan.optical_density,
     )
 
-    experiment.add_scan(scan_0, scan_group_id="cell_1")
-    experiment.add_scan(scan_4, scan_group_id="cell_2")
+    experiment.add_scan(scan_0, scan_group_id=0)
+    experiment.add_scan(scan_4, scan_group_id=1)
 
     assert experiment.next_scan_index == 5
+
 
 def test_add_scan_to_existing_group():
     experiment = Experiment()
@@ -268,6 +277,7 @@ def test_add_scan_to_existing_group():
         config=scan.config,
         wavelength=scan.wavelength,
         raw_dark=scan.raw_dark,
+        raw_transition=raw_transition,
         raw_specimen=scan.raw_specimen,
         dark_mean=scan.dark_mean,
         specimen_mean=scan.specimen_mean,
@@ -275,11 +285,33 @@ def test_add_scan_to_existing_group():
         optical_density=scan.optical_density,
     )
 
-    experiment.add_scan(scan_0, scan_group_id="cell_1")
-    experiment.add_scan(scan_1, scan_group_id="cell_1")
+    experiment.add_scan(scan_0, scan_group_id=0)
+    experiment.add_scan(scan_1, scan_group_id=0)
 
     assert len(experiment.scan_groups) == 1
     assert len(experiment.scan_groups[0].scans) == 2
     assert experiment.scan_groups[0].scans[0] is scan_0
     assert experiment.scan_groups[0].scans[1] is scan_1
+
+
+def test_scan_group():
+    group = ScanGroup(
+        scan_group_id=3,
+        label="control",
+    )
+
+    assert group.scan_group_id == 3
+    assert group.label == "control"
+    assert group.scans == []
+
+
+def test_scan_group_rejects_string_id():
+    with pytest.raises(
+        TypeError,
+        match="scan_group_id must be an integer",
+    ):
+        ScanGroup(
+            scan_group_id="control",
+            label="control",
+        )
 

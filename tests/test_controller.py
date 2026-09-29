@@ -127,7 +127,7 @@ def test_acquire_scan():
         config=config,
         polarization=Polarization.TRANSVERSE,
         baseline_index=baseline.baseline_index,
-        scan_group_id="cell_1",
+        scan_group_id=0,
     )
 
     assert scan.scan_index == 0
@@ -139,7 +139,7 @@ def test_acquire_scan():
 
     group = experiment.scan_groups[0]
 
-    assert group.scan_group_id == "cell_1"
+    assert group.scan_group_id == 0
     assert len(group.scans) == 1
     assert group.scans[0] is scan
 
@@ -176,7 +176,7 @@ def test_acquire_scan_rejects_missing_baseline_before_acquisition():
             config=config,
             polarization=Polarization.TRANSVERSE,
             baseline_index=7,
-            scan_group_id="cell_1",
+            scan_group_id=0,
         )
 
     assert acquisition.acquire_count == 0
@@ -218,7 +218,7 @@ def test_acquire_scan_rejects_wrong_polarization_before_acquisition():
             config=config,
             polarization=Polarization.LONGITUDINAL,
             baseline_index=baseline.baseline_index,
-            scan_group_id="cell_1",
+            scan_group_id=0,
         )
 
     assert acquisition.acquire_count == acquisitions_before
@@ -271,7 +271,7 @@ def test_acquire_scan_rejects_incompatible_config_before_acquisition():
             config=scan_config,
             polarization=Polarization.TRANSVERSE,
             baseline_index=baseline.baseline_index,
-            scan_group_id="cell_1",
+            scan_group_id=0,
         )
 
     assert acquisition.acquire_count == acquisitions_before

@@ -42,7 +42,7 @@ class MSPController:
         config: ScanConfig,
         polarization: Polarization,
         baseline_index: int,
-        scan_group_id: int | str,
+        scan_group_id: int,
     ) -> Scan:
         """Acquire, process, and add a specimen scan to the experiment."""
 

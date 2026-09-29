@@ -22,6 +22,7 @@ class Baseline:
     wavelength: np.ndarray
 
     raw_dark: np.ndarray
+    raw_transition: np.ndarray
     raw_baseline: np.ndarray
 
     dark_mean: np.ndarray
@@ -42,6 +43,7 @@ class Scan:
     wavelength: np.ndarray
 
     raw_dark: np.ndarray
+    raw_transition: np.ndarray
     raw_specimen: np.ndarray
 
     dark_mean: np.ndarray
@@ -56,8 +58,16 @@ class Scan:
 class ScanGroup:
     """A collection of related specimen scans."""
 
-    scan_group_id: int | str
+    scan_group_id: int
+    label: str = ""
     scans: list[Scan] = field(default_factory=list)
+
+    def __post_init__(self):
+        if not isinstance(self.scan_group_id, int):
+            raise TypeError("scan_group_id must be an integer")
+
+        if not isinstance(self.label, str):
+            raise TypeError("label must be a string")
 
 
 @dataclass
@@ -122,7 +132,7 @@ class Experiment:
     def add_scan(
         self,
         scan: Scan,
-        scan_group_id: int | str,
+        scan_group_id: int,
     ) -> None:
         """Add a scan to a scan group."""
 
