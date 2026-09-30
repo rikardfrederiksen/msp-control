@@ -24,6 +24,23 @@ class ScanGroupAlreadyExistsError(ValueError):
     pass
 
 
+def create_experiment_file(
+    filename: str | Path,
+) -> None:
+    """Create a new empty MSP HDF5 experiment file."""
+
+    filename = Path(filename)
+
+    if filename.exists():
+        raise FileExistsError(
+            f"File already exists: {filename}"
+        )
+
+    with h5py.File(filename, "w") as h5:
+        _initialize_file(h5)
+        h5.flush()
+
+
 def write_baseline(
     filename: str | Path,
     baseline: Baseline,

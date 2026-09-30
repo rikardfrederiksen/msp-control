@@ -22,6 +22,7 @@ from msp_control.storage.hdf5 import (
     read_experiment,
     _commit_pending_group,
     update_scan_group,
+    create_experiment_file,
 )
 
 
@@ -980,3 +981,29 @@ def test_update_scan_group_restores_old_group_after_commit_failure(
 
     assert loaded.label == "control"
     assert loaded.scan_indices == [scan.scan_index]
+
+
+def test_create_experiment_file(tmp_path):
+    filename = tmp_path / "experiment.h5"
+
+    create_experiment_file(filename)
+
+    assert filename.exists()
+
+    with h5py.File(filename, "r") as h5:
+        assert h5.attrs["format"] == "msp-control"
+        assert h5.attrs["format_version"] == 1
+
+
+def test_create_experiment_file_rejects_existing_file(tmp_path):
+    filename = tmp_path / "experiment.h5"
+
+    filename.write_text("do not overwrite")
+
+    with pytest.raises(
+        FileExistsError,
+        match="File already exists",
+    ):
+        create_experiment_file(filename)
+
+    assert filename.read_text() == "do not overwrite"
