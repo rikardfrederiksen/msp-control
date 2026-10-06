@@ -6,7 +6,6 @@ from msp_control.hardware.nidaq import NIDaq
 from msp_control.hardware.optoscan import OptoscanSerial
 from msp_control.config import ScanConfig
 
-
 @dataclass
 class RawAcquisition:
     """Raw sweeps acquired during one MSP scan."""

@@ -1,6 +1,7 @@
 import h5py
 import numpy as np
 import pytest
+from datetime import datetime, timezone
 
 from dataclasses import replace
 
@@ -26,6 +27,13 @@ from msp_control.storage.hdf5 import (
 )
 
 
+timestamp = datetime(
+    2026, 10, 6,
+    8, 31, 42, 381234,
+    tzinfo=timezone.utc,
+)
+
+
 @pytest.fixture
 def baseline():
     config = ScanConfig(
@@ -41,6 +49,7 @@ def baseline():
 
     return Baseline(
         baseline_index=7,
+        timestamp=timestamp,
         polarization=Polarization.TRANSVERSE,
         config=config,
         wavelength=np.array([500.0, 510.0, 520.0]),
@@ -81,6 +90,7 @@ def scan():
     return Scan(
         scan_index=12,
         baseline_index=7,
+        timestamp=timestamp,
         polarization=Polarization.TRANSVERSE,
         config=config,
         wavelength=np.array([500.0, 510.0, 520.0]),
@@ -119,6 +129,7 @@ def test_write_baseline(tmp_path):
 
     baseline = Baseline(
         baseline_index=7,
+        timestamp=timestamp,
         polarization=Polarization.TRANSVERSE,
         config=config,
         wavelength=np.array([500.0, 510.0, 520.0]),
@@ -180,6 +191,7 @@ def test_baseline_round_trip(tmp_path):
 
     baseline = Baseline(
         baseline_index=7,
+        timestamp=timestamp,
         polarization=Polarization.TRANSVERSE,
         config=config,
         wavelength=np.array([500.0, 510.0, 520.0]),
@@ -210,6 +222,7 @@ def test_baseline_round_trip(tmp_path):
 
     assert loaded.baseline_index == baseline.baseline_index
     assert loaded.polarization is baseline.polarization
+    assert loaded.timestamp == baseline.timestamp
     assert loaded.config == baseline.config
     assert loaded.metadata == baseline.metadata
     assert isinstance(loaded.metadata["accepted"], bool)
@@ -257,6 +270,7 @@ def test_write_multiple_baselines(tmp_path):
 
     baseline_0 = Baseline(
         baseline_index=0,
+        timestamp=timestamp,
         polarization=Polarization.TRANSVERSE,
         config=config,
         wavelength=np.array([500.0, 510.0, 520.0]),
@@ -360,7 +374,8 @@ def test_scan_round_trip(tmp_path, baseline, scan):
     assert loaded.polarization is scan.polarization
     assert loaded.config == scan.config
     assert loaded.metadata == scan.metadata
-
+    assert loaded.timestamp == scan.timestamp
+    
     np.testing.assert_array_equal(
         loaded.wavelength,
         scan.wavelength,

@@ -1,6 +1,7 @@
 import numpy as np
 
 import pytest
+from datetime import datetime, timezone
 
 from msp_control.config import ScanConfig
 from msp_control.data.model import (
@@ -24,6 +25,11 @@ config = ScanConfig(
 )
 
 wavelength = config.wavelengths
+timestamp = datetime(
+    2026, 10, 6,
+    8, 31, 42, 381234,
+    tzinfo=timezone.utc,
+)
 
 # Fake baseline acquisition:
 # 2 dark sweeps and 5 illuminated sweeps
@@ -37,6 +43,7 @@ baseline_corrected = baseline_mean - dark_baseline
 
 baseline = Baseline(
     baseline_index=0,
+    timestamp=timestamp,
     polarization=Polarization.TRANSVERSE,
     config=config,
     wavelength=wavelength,
@@ -69,6 +76,7 @@ optical_density = -np.log10(
 scan = Scan(
     scan_index=0,
     baseline_index=baseline.baseline_index,
+    timestamp=timestamp,
     polarization=Polarization.TRANSVERSE,
     config=config,
     wavelength=wavelength,
@@ -154,6 +162,7 @@ def test_get_baselines_filters_by_polarization():
 
     baseline_l = Baseline(
         baseline_index=1,
+        timestamp=timestamp,
         polarization=Polarization.LONGITUDINAL,
         config=baseline.config,
         wavelength=baseline.wavelength,
@@ -194,6 +203,7 @@ def test_next_baseline_index():
     baseline_2 = Baseline(
         baseline_index=2,
         polarization=Polarization.TRANSVERSE,
+        timestamp=timestamp,
         config=baseline.config,
         wavelength=baseline.wavelength,
         raw_dark=baseline.raw_dark,

@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import numpy as np
 import pytest
 
@@ -6,6 +8,12 @@ from msp_control.data.model import Polarization
 from msp_control.data.processing import process_baseline, process_scan
 from msp_control.config import ScanConfig
 
+
+timestamp = datetime(
+    2026, 10, 6,
+    8, 31, 42, 381234,
+    tzinfo=timezone.utc,
+)
 
 def test_process_baseline():
     config = ScanConfig(
@@ -36,9 +44,11 @@ def test_process_baseline():
         config=config,
         baseline_index=7,
         polarization=Polarization.TRANSVERSE,
+        timestamp=timestamp,
     )
 
     assert baseline.polarization is Polarization.TRANSVERSE
+    assert baseline.timestamp == timestamp
 
     np.testing.assert_array_equal(
         baseline.wavelength,
@@ -112,6 +122,7 @@ def test_process_scan():
         config=config,
         baseline_index=7,
         polarization=Polarization.TRANSVERSE,
+        timestamp=timestamp,
     )
 
     specimen_acquisition = RawAcquisition(
@@ -128,6 +139,7 @@ def test_process_scan():
 
     scan = process_scan(
         acquisition=specimen_acquisition,
+        timestamp=timestamp,
         config=config,
         baseline=baseline,
         scan_index=12,
@@ -137,6 +149,7 @@ def test_process_scan():
     assert scan.scan_index == 12
     assert scan.baseline_index == 7
     assert scan.polarization is Polarization.TRANSVERSE
+    assert scan.timestamp == timestamp
 
     np.testing.assert_array_equal(
         scan.wavelength,
@@ -213,6 +226,7 @@ def test_process_scan_rejects_mismatched_polarization():
         config=config,
         baseline_index=7,
         polarization=Polarization.TRANSVERSE,
+        timestamp=timestamp,
     )
 
     specimen_acquisition = RawAcquisition(
@@ -237,6 +251,7 @@ def test_process_scan_rejects_mismatched_polarization():
             baseline=baseline,
             scan_index=12,
             polarization=Polarization.LONGITUDINAL,
+            timestamp=timestamp,
         )
 
 
@@ -269,6 +284,7 @@ def test_process_scan_rejects_incompatible_config():
         config=baseline_config,
         baseline_index=7,
         polarization=Polarization.TRANSVERSE,
+        timestamp=timestamp,
     )
 
     specimen_config = ScanConfig(
@@ -304,6 +320,7 @@ def test_process_scan_rejects_incompatible_config():
             baseline=baseline,
             scan_index=12,
             polarization=Polarization.TRANSVERSE,
+            timestamp=timestamp,
         )
 
 def test_process_scan_allows_different_sweep_counts():
@@ -335,6 +352,7 @@ def test_process_scan_allows_different_sweep_counts():
         config=baseline_config,
         baseline_index=7,
         polarization=Polarization.TRANSVERSE,
+        timestamp=timestamp,
     )
 
     specimen_config = ScanConfig(
@@ -369,6 +387,7 @@ def test_process_scan_allows_different_sweep_counts():
         baseline=baseline,
         scan_index=12,
         polarization=Polarization.TRANSVERSE,
+        timestamp=timestamp,
     )
 
     assert scan.config.dark_scans == 3

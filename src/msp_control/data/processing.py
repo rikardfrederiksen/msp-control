@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import numpy as np
 
 from msp_control.acquisition import RawAcquisition
@@ -10,6 +12,7 @@ def process_baseline(
     config: ScanConfig,
     baseline_index: int,
     polarization: Polarization,
+    timestamp: datetime,
 ) -> Baseline:
     """Process a raw acquisition into an MSP baseline."""
 
@@ -25,6 +28,7 @@ def process_baseline(
     return Baseline(
         baseline_index=baseline_index,
         polarization=polarization,
+        timestamp=timestamp,
         config=config,
         wavelength=config.wavelengths,
         raw_dark=raw_dark,
@@ -41,6 +45,7 @@ def process_scan(
     baseline: Baseline,
     scan_index: int,
     polarization: Polarization,
+    timestamp: datetime,
 ) -> Scan:
     """Process a raw specimen acquisition into an MSP scan."""
 
@@ -72,6 +77,7 @@ def process_scan(
     return Scan(
         scan_index=scan_index,
         baseline_index=baseline.baseline_index,
+        timestamp=timestamp,
         polarization=polarization,
         config=config,
         wavelength=config.wavelengths,

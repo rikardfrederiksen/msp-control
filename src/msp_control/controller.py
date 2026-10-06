@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from msp_control.clock import Clock
 from msp_control.acquisition import AcquisitionController
 from msp_control.config import ScanConfig
 from msp_control.data.model import Baseline, Experiment, Polarization, Scan, ScanGroup
@@ -14,13 +15,14 @@ from msp_control.storage.hdf5 import (
 )
 
 class MSPController:
-    """Coordinate high-level MSP experiment operations."""
-
     def __init__(
         self,
         acquisition: AcquisitionController,
+        clock: Clock | None = None,
     ):
         self.acquisition = acquisition
+        self.clock = clock if clock is not None else Clock()
+
         self.experiment: Experiment | None = None
         self.filename: Path | None = None
 
@@ -37,6 +39,7 @@ class MSPController:
             )
 
         baseline_index = self.experiment.next_baseline_index
+        timestamp = self.clock.now()
 
         raw = self.acquisition.acquire(config)
 
@@ -45,12 +48,10 @@ class MSPController:
             config=config,
             baseline_index=baseline_index,
             polarization=polarization,
+            timestamp=timestamp,
         )
 
-        write_baseline(
-            self.filename,
-            baseline,
-        )
+        write_baseline(self.filename, baseline)
 
         self.experiment.add_baseline(baseline)
 
@@ -70,6 +71,7 @@ class MSPController:
             )
 
         scan_index = self.experiment.next_scan_index
+        timestamp = self.clock.now()
         baseline = self.experiment.get_baseline(baseline_index)
 
         if baseline.polarization is not polarization:
@@ -92,6 +94,7 @@ class MSPController:
             baseline=baseline,
             scan_index=scan_index,
             polarization=polarization,
+            timestamp=timestamp,
         )
 
         write_scan(

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import numpy as np
 import pytest
 
@@ -30,6 +32,19 @@ class FakeAcquisitionController:
                 np.array([13.0, 14.0, 15.0]),
             ],
         )
+
+
+class FailingAcquisitionController:
+    def acquire(self, config):
+        raise RuntimeError("Acquisition failed")
+
+
+class FakeClock:
+    def __init__(self, timestamp: datetime):
+        self.timestamp = timestamp
+
+    def now(self) -> datetime:
+        return self.timestamp
 
 
 def test_acquire_baseline(tmp_path):
@@ -84,9 +99,6 @@ def test_acquire_baseline(tmp_path):
         baseline.baseline_corrected,
     )
 
-class FailingAcquisitionController:
-    def acquire(self, config):
-        raise RuntimeError("Acquisition failed")
 
 
 def test_acquire_baseline_does_not_modify_experiment_on_failure(
@@ -1377,3 +1389,78 @@ def test_rename_scan_group_rejects_non_string_label(tmp_path):
     )
 
     assert stored_group.label == "Control"
+
+def test_acquire_baseline_uses_clock_timestamp(tmp_path):
+    timestamp = datetime.fromisoformat(
+        "2026-10-06T08:31:42.381234-07:00"
+    )
+    
+    config = ScanConfig(
+        start_nm=500,
+        end_nm=520,
+        step_nm=10,
+        step_time_ms=2,
+        input_slit_nm=4,
+        output_slit_nm=4,
+        dark_scans=2,
+        data_scans=2,
+    )
+
+    acquisition = FakeAcquisitionController()
+
+    controller = MSPController(
+        acquisition=acquisition,
+        clock=FakeClock(timestamp),
+    )
+
+    controller.create_new_experiment_file(
+        tmp_path / "experiment.h5"
+    )
+
+    baseline = controller.acquire_baseline(
+        config=config,
+        polarization=Polarization.TRANSVERSE,
+    )
+
+    assert baseline.timestamp == timestamp
+
+
+def test_acquire_scan_uses_clock_timestamp(tmp_path):
+    timestamp = datetime.fromisoformat(
+        "2026-10-06T08:31:42.381234-07:00"
+    )
+
+    config = ScanConfig(
+        start_nm=500,
+        end_nm=520,
+        step_nm=10,
+        step_time_ms=2,
+        input_slit_nm=4,
+        output_slit_nm=4,
+        dark_scans=2,
+        data_scans=2,
+    )
+
+    acquisition = FakeAcquisitionController()
+
+    controller = MSPController(
+        acquisition=acquisition,
+        clock=FakeClock(timestamp),
+    )
+
+    controller.create_new_experiment_file(
+        tmp_path / "experiment.h5"
+    )
+
+    baseline = controller.acquire_baseline(
+        config=config,
+        polarization=Polarization.TRANSVERSE,
+    )
+
+    scan = controller.acquire_scan(
+        config=config,
+        baseline_index=baseline.baseline_index,
+        polarization=Polarization.TRANSVERSE,
+    )
+
+    assert scan.timestamp == timestamp

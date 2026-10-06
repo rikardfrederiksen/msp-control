@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime
 
 import h5py
 import numpy as np
@@ -69,6 +70,7 @@ def write_baseline(
 
         try:
             baseline_group.attrs["baseline_index"] = baseline.baseline_index
+            baseline_group.attrs["timestamp"] = baseline.timestamp.isoformat(sep=" ")
             baseline_group.attrs["polarization"] = baseline.polarization.value
 
             config_group = baseline_group.create_group("config")
@@ -163,6 +165,7 @@ def write_scan(
         try:
             scan_group.attrs["scan_index"] = scan.scan_index
             scan_group.attrs["baseline_index"] = scan.baseline_index
+            scan_group.attrs["timestamp"] = scan.timestamp.isoformat(sep=" ")
             scan_group.attrs["polarization"] = scan.polarization.value
 
             config_group = scan_group.create_group("config")
@@ -242,10 +245,15 @@ def read_baseline(
             baseline_group.attrs["polarization"]
         )
 
+        timestamp = datetime.fromisoformat(
+            baseline_group.attrs["timestamp"]
+        )
+
         return Baseline(
             baseline_index=int(
                 baseline_group.attrs["baseline_index"]
             ),
+            timestamp=timestamp,
             polarization=polarization,
             config=config,
             wavelength=data_group["wavelength"][:],
@@ -282,6 +290,10 @@ def read_scan(
             scan_group.attrs["polarization"]
         )
 
+        timestamp = datetime.fromisoformat(
+            scan_group.attrs["timestamp"]
+        )
+
         return Scan(
             scan_index=int(
                 scan_group.attrs["scan_index"]
@@ -289,6 +301,7 @@ def read_scan(
             baseline_index=int(
                 scan_group.attrs["baseline_index"]
             ),
+            timestamp=timestamp,
             polarization=polarization,
             config=config,
             wavelength=data_group["wavelength"][:],

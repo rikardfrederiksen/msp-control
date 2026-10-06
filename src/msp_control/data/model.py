@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+from datetime import datetime
 
 import numpy as np
 
@@ -17,6 +18,7 @@ class Baseline:
     """A baseline measurement used as the reference for specimen scans."""
 
     baseline_index: int
+    timestamp: datetime
     polarization: Polarization
     config: ScanConfig
     wavelength: np.ndarray
@@ -31,6 +33,9 @@ class Baseline:
 
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self):
+        if not isinstance(self.timestamp, datetime):
+            raise TypeError("timestamp must be a datetime")
 
 @dataclass
 class Scan:
@@ -38,6 +43,7 @@ class Scan:
 
     scan_index: int
     baseline_index: int
+    timestamp: datetime
     polarization: Polarization
     config: ScanConfig
     wavelength: np.ndarray
