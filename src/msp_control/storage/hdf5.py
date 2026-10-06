@@ -5,7 +5,7 @@ import h5py
 import numpy as np
 
 from msp_control.config import ScanConfig
-from msp_control.data.model import Baseline, Polarization, Scan, ScanGroup, Experiment
+from msp_control.data.model import Baseline, Polarization, Scan, ScanGroup, Experiment, Event
 
 
 FORMAT_NAME = "msp-control"
@@ -529,6 +529,15 @@ def read_experiment(
                 for group in h5["scan_groups"].values()
             ]
 
+        event_ids = []
+
+        if "events" in h5:
+            event_ids = [
+
+        int(group.attrs["event_id"])
+        for group in h5["events"].values()
+    ]
+
     for baseline_index in baseline_indices:
         baseline = read_baseline(
             filename,
@@ -549,6 +558,13 @@ def read_experiment(
             scan_group_id,
         )
         experiment.scan_groups.append(scan_group)
+
+    for event_id in event_ids:
+        event = read_event(
+            filename,
+            event_id,
+        )
+        experiment.add_event(event)
 
     return experiment
 
@@ -572,6 +588,80 @@ def write_experiment(
 
     for group in experiment.scan_groups:
         write_scan_group(filename, group)
+
+    for event in experiment.events:
+        write_event(filename, event)
+
+
+def write_event(
+    filename: str | Path,
+    event: Event,
+) -> None:
+    """Write an event to an MSP HDF5 file."""
+
+    with h5py.File(filename, "a") as h5:
+        _initialize_file(h5)
+
+        events_group = h5.require_group("events")
+        pending_group = h5.require_group("_pending")
+
+        group_name = f"event_{event.event_id:03d}"
+
+        if group_name in events_group:
+            raise ValueError(
+                f"Event {event.event_id} already exists"
+            )
+
+        if group_name in pending_group:
+            del pending_group[group_name]
+
+        event_group = pending_group.create_group(group_name)
+
+        try:
+            event_group.attrs["event_id"] = event.event_id
+            event_group.attrs["timestamp"] = (
+                event.timestamp.isoformat(sep=" ")
+            )
+            event_group.attrs["description"] = event.description
+
+            _commit_pending_group(
+                h5,
+                f"_pending/{group_name}",
+                f"events/{group_name}",
+            )
+
+        except Exception:
+            if group_name in pending_group:
+                del pending_group[group_name]
+                h5.flush()
+
+            raise
+
+
+def read_event(
+    filename: str | Path,
+    event_id: int,
+) -> Event:
+    """Read an event from an MSP HDF5 file."""
+
+    with h5py.File(filename, "r") as h5:
+        _validate_file(h5)
+
+        event_group = h5[
+            f"events/event_{event_id:03d}"
+        ]
+
+        timestamp = datetime.fromisoformat(
+            event_group.attrs["timestamp"]
+        )
+
+        return Event(
+            event_id=int(
+                event_group.attrs["event_id"]
+            ),
+            timestamp=timestamp,
+            description=event_group.attrs["description"],
+        )
 
 
 def _write_metadata(
@@ -703,4 +793,5 @@ def _commit_pending_group(
 
     h5.move(pending_path, final_path)
     h5.flush()
+
 

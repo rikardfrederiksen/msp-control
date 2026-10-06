@@ -10,6 +10,7 @@ from msp_control.data.model import (
     Polarization,
     Scan,
     ScanGroup,
+    Event,
 )
 
 
@@ -520,3 +521,55 @@ def test_rename_scan_group_rejects_non_string_label():
     ):
         experiment.rename_scan_group(3, 42)
 
+def test_add_event():
+    event = Event(
+        event_id=0,
+        timestamp=timestamp,
+        description="11-cis retinal added",
+    )
+
+    experiment = Experiment()
+    experiment.add_event(event)
+
+    assert experiment.events == [event]
+
+
+def test_get_event():
+    event = Event(
+        event_id=0,
+        timestamp=timestamp,
+        description="11-cis retinal added",
+    )
+
+    experiment = Experiment(events=[event])
+
+    assert experiment.get_event(0) is event
+
+
+def test_add_event_rejects_duplicate_id():
+    event = Event(
+        event_id=0,
+        timestamp=timestamp,
+        description="11-cis retinal added",
+    )
+
+    experiment = Experiment(events=[event])
+
+    with pytest.raises(ValueError):
+        experiment.add_event(event)
+
+
+def test_next_event_id():
+    experiment = Experiment()
+
+    assert experiment.next_event_id == 0
+
+    experiment.add_event(
+        Event(
+            event_id=0,
+            timestamp=timestamp,
+            description="11-cis retinal added",
+        )
+    )
+
+    assert experiment.next_event_id == 1

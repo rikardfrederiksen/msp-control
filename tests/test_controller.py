@@ -1464,3 +1464,66 @@ def test_acquire_scan_uses_clock_timestamp(tmp_path):
     )
 
     assert scan.timestamp == timestamp
+
+
+def test_add_event(tmp_path):
+    timestamp = datetime.fromisoformat(
+        "2026-10-06T08:31:42.381234-07:00"
+    )
+
+    controller = MSPController(
+        acquisition=FakeAcquisitionController(),
+        clock=FakeClock(timestamp),
+    )
+
+    controller.create_new_experiment_file(
+        tmp_path / "experiment.h5"
+    )
+
+    event = controller.add_event(
+        "11-cis retinal added"
+    )
+
+    assert event.event_id == 0
+    assert event.timestamp == timestamp
+    assert event.description == "11-cis retinal added"
+
+    assert controller.experiment.events == [event]
+
+
+def test_add_event_rejects_no_active_experiment():
+    controller = MSPController(
+        acquisition=FakeAcquisitionController(),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="No experiment is active",
+    ):
+        controller.add_event("11-cis retinal added")
+
+
+def test_add_event_does_not_modify_experiment_on_storage_failure(
+    tmp_path,
+    monkeypatch,
+):
+    controller = MSPController(
+        acquisition=FakeAcquisitionController(),
+    )
+
+    controller.create_new_experiment_file(
+        tmp_path / "experiment.h5"
+    )
+
+    def fail_write_event(*args, **kwargs):
+        raise OSError("storage failed")
+
+    monkeypatch.setattr(
+        "msp_control.controller.write_event",
+        fail_write_event,
+    )
+
+    with pytest.raises(OSError, match="storage failed"):
+        controller.add_event("11-cis retinal added")
+
+    assert controller.experiment.events == []

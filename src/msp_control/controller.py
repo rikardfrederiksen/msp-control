@@ -3,7 +3,7 @@ from pathlib import Path
 from msp_control.clock import Clock
 from msp_control.acquisition import AcquisitionController
 from msp_control.config import ScanConfig
-from msp_control.data.model import Baseline, Experiment, Polarization, Scan, ScanGroup
+from msp_control.data.model import Baseline, Experiment, Polarization, Scan, ScanGroup, Event
 from msp_control.data.processing import process_baseline, process_scan
 from msp_control.storage.hdf5 import (
     create_experiment_file,
@@ -12,6 +12,7 @@ from msp_control.storage.hdf5 import (
     write_experiment_metadata,
     write_scan_group,
     update_scan_group,
+    write_event,
 )
 
 class MSPController:
@@ -286,3 +287,22 @@ class MSPController:
             scan_group_id,
             label,
         )
+
+
+    def add_event(self, description: str) -> Event:
+        """Record a timestamped event in the active experiment."""
+
+        if self.experiment is None or self.filename is None:
+            raise RuntimeError("No experiment is active")
+
+        event = Event(
+            event_id=self.experiment.next_event_id,
+            timestamp=self.clock.now(),
+            description=description,
+        )
+
+        write_event(self.filename, event)
+
+        self.experiment.add_event(event)
+
+        return event

@@ -86,6 +86,15 @@ class ScanGroup:
 
 
 @dataclass
+class Event:
+    """A timestamped user-defined event during an experiment."""
+
+    event_id: int
+    timestamp: datetime
+    description: str
+
+
+@dataclass
 class Experiment:
     """A complete microspectrophotometry experiment."""
 
@@ -93,6 +102,7 @@ class Experiment:
     baselines: list[Baseline] = field(default_factory=list)
     scans: list[Scan] = field(default_factory=list)
     scan_groups: list[ScanGroup] = field(default_factory=list)
+    events: list[Event] = field(default_factory=list)
 
     def add_baseline(self, baseline: Baseline) -> None:
         """Add a baseline to the experiment."""
@@ -272,3 +282,31 @@ class Experiment:
 
         scan_group = self.get_scan_group(scan_group_id)
         scan_group.label = label
+
+    @property
+    def next_event_id(self) -> int:
+        if not self.events:
+            return 0
+        return max(event.event_id for event in self.events) + 1
+
+
+    def add_event(self, event: Event) -> None:
+        if any(
+            existing.event_id == event.event_id
+            for existing in self.events
+        ):
+            raise ValueError(
+                f"Event {event.event_id} already exists"
+            )
+
+        self.events.append(event)
+
+
+    def get_event(self, event_id: int) -> Event:
+        for event in self.events:
+            if event.event_id == event_id:
+                return event
+
+        raise ValueError(
+            f"Event {event_id} does not exist"
+        )

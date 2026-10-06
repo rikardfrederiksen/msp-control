@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from dataclasses import replace
 
 from msp_control.config import ScanConfig
-from msp_control.data.model import Baseline, Polarization, Scan, ScanGroup, Experiment
+from msp_control.data.model import Baseline, Polarization, Scan, ScanGroup, Experiment, Event
 from msp_control.storage.hdf5 import (
     BaselineAlreadyExistsError,
     ScanAlreadyExistsError,
@@ -24,6 +24,8 @@ from msp_control.storage.hdf5 import (
     _commit_pending_group,
     update_scan_group,
     create_experiment_file,
+    read_event,
+    write_event,
 )
 
 
@@ -605,6 +607,15 @@ def test_experiment_round_trip(tmp_path, baseline, scan):
     )
     experiment.scan_groups.append(scan_group)
 
+    # Event
+    event = Event(
+        event_id=0,
+        timestamp=timestamp,
+        description="11-cis retinal added",
+    )
+
+    experiment.add_event(event)
+    
     write_experiment(filename, experiment)
 
     loaded = read_experiment(filename)
@@ -643,6 +654,16 @@ def test_experiment_round_trip(tmp_path, baseline, scan):
     assert loaded_group.label == "control"
     assert loaded_group.scan_indices == [scan.scan_index]
 
+    # Event
+
+    assert len(loaded.events) == 1
+
+    loaded_event = loaded.events[0]
+
+    assert loaded_event.event_id == event.event_id
+    assert loaded_event.timestamp == event.timestamp
+    assert loaded_event.description == event.description
+    
 
 def test_write_scan_rejects_missing_baseline(tmp_path, scan):
     filename = tmp_path / "test.h5"
@@ -1022,3 +1043,92 @@ def test_create_experiment_file_rejects_existing_file(tmp_path):
         create_experiment_file(filename)
 
     assert filename.read_text() == "do not overwrite"
+
+def test_write_event(tmp_path):
+    filename = tmp_path / "experiment.h5"
+    create_experiment_file(filename)
+
+    event = Event(
+        event_id=0,
+        timestamp=timestamp,
+        description="11-cis retinal added",
+    )
+
+    write_event(filename, event)
+
+    with h5py.File(filename, "r") as h5:
+        assert "events/event_000" in h5
+
+        event_group = h5["events/event_000"]
+
+        assert event_group.attrs["event_id"] == 0
+        assert (
+            event_group.attrs["timestamp"]
+            == timestamp.isoformat(sep=" ")
+        )
+        assert (
+            event_group.attrs["description"]
+            == "11-cis retinal added"
+        )
+
+
+def test_event_round_trip(tmp_path):
+    filename = tmp_path / "experiment.h5"
+    create_experiment_file(filename)
+
+    event = Event(
+        event_id=0,
+        timestamp=timestamp,
+        description="11-cis retinal added",
+    )
+
+    write_event(filename, event)
+
+    loaded = read_event(filename, event_id=0)
+
+    assert loaded.event_id == event.event_id
+    assert loaded.timestamp == event.timestamp
+    assert loaded.description == event.description
+
+
+def test_write_event_rejects_duplicate_id(tmp_path):
+    filename = tmp_path / "experiment.h5"
+    create_experiment_file(filename)
+
+    event = Event(
+        event_id=0,
+        timestamp=timestamp,
+        description="11-cis retinal added",
+    )
+
+    write_event(filename, event)
+
+    with pytest.raises(ValueError):
+        write_event(filename, event)
+
+
+def test_read_experiment_without_events(tmp_path, baseline, scan):
+    filename = tmp_path / "test.h5"
+    
+    experiment = Experiment(
+        shared_metadata={
+            "animal": "A17",
+            "species": "mouse",
+        }
+    )
+
+    experiment.add_baseline(baseline)
+    experiment.add_scan(scan)
+
+    scan_group = ScanGroup(
+        scan_group_id=3,
+        label="control",
+        scan_indices=[scan.scan_index],
+    )
+    experiment.scan_groups.append(scan_group)
+
+    write_experiment(filename, experiment)
+
+    loaded = read_experiment(filename)
+
+    assert loaded.events == []
