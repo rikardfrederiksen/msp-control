@@ -19,14 +19,19 @@ def test_field_stop_config():
 
 
 def test_field_stop_position():
-    position = FieldStopPosition(stage_angle_deg=130.0623)
+    position = FieldStopPosition(
+        stage_angle_deg=130.0623,
+        angle_deg=90.0623,
+    )
 
     assert position.stage_angle_deg == pytest.approx(130.0623)
+    assert position.angle_deg == pytest.approx(90.0623)
 
 
 def test_field_stop_monitor_connects_device():
     device = MagicMock()
-    monitor = FieldStopMonitor(device=device)
+    config = FieldStopConfig()
+    monitor = FieldStopMonitor(device=device, config=config)
 
     monitor.connect()
 
@@ -36,21 +41,65 @@ def test_field_stop_monitor_connects_device():
 def test_field_stop_monitor_reads_position():
     device = MagicMock()
     device.is_homed.return_value = True
-    device.get_position.return_value = 130.0623
+    device.get_position.return_value = 130.0
 
-    monitor = FieldStopMonitor(device=device)
+    config = FieldStopConfig()
+    monitor = FieldStopMonitor(device=device, config=config)
 
     position = monitor.read_position()
 
     device.get_position.assert_called_once()
-    assert position.stage_angle_deg == pytest.approx(130.0623)
+    assert position.stage_angle_deg == pytest.approx(130.0)
+    assert position.angle_deg == pytest.approx(90.0)
+
+
+@pytest.mark.parametrize(
+    "stage_angle, expected_angle",
+    [
+        (40.0, 0.0),      # Horizontal
+        (130.0, 90.0),    # Vertical
+        (220.0, 0.0),     # Horizontal + 180°
+        (310.0, 90.0),    # Vertical + 180°
+        (20.0, 160.0),    # Below reference
+        (85.0, 45.0),     # Intermediate orientation
+    ],
+)
+
+
+def test_field_stop_calibration(stage_angle, expected_angle):
+    device = MagicMock()
+    device.is_homed.return_value = True
+    device.get_position.return_value = stage_angle
+
+    config = FieldStopConfig()
+    monitor = FieldStopMonitor(device=device, config=config)
+
+    position = monitor.read_position()
+
+    assert position.stage_angle_deg == pytest.approx(stage_angle)
+    assert position.angle_deg == pytest.approx(expected_angle)
+
+
+def test_field_stop_custom_calibration_reference():
+    device = MagicMock()
+    device.is_homed.return_value = True
+    device.get_position.return_value = 135.0
+
+    config = FieldStopConfig(horizontal_reference_deg=45.0)
+    monitor = FieldStopMonitor(device=device, config=config)
+
+    position = monitor.read_position()
+
+    assert position.stage_angle_deg == pytest.approx(135.0)
+    assert position.angle_deg == pytest.approx(90.0)
 
 
 def test_field_stop_monitor_rejects_unhomed_device():
     device = MagicMock()
     device.is_homed.return_value = False
 
-    monitor = FieldStopMonitor(device=device)
+    config = FieldStopConfig()
+    monitor = FieldStopMonitor(device=device, config=config)
 
     with pytest.raises(RuntimeError, match="not homed"):
         monitor.read_position()
@@ -58,7 +107,8 @@ def test_field_stop_monitor_rejects_unhomed_device():
 
 def test_field_stop_monitor_closes_device():
     device = MagicMock()
-    monitor = FieldStopMonitor(device=device)
+    config = FieldStopConfig()
+    monitor = FieldStopMonitor(device=device, config=config)
 
     monitor.close()
 

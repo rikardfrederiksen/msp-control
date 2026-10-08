@@ -7,11 +7,13 @@ class FieldStopConfig:
     poll_interval_ms: int = 250
     settings_timeout_ms: int = 5000
     kinesis_path: str = r"C:\Program Files\Thorlabs\Kinesis"
+    horizontal_reference_deg: float = 40.0
 
 
 @dataclass(frozen=True)
 class FieldStopPosition:
     stage_angle_deg: float
+    angle_deg: float
 
 
 class KinesisFieldStopDevice:
@@ -88,10 +90,12 @@ class KinesisFieldStopDevice:
             settings_option=settings_option,
         )
 
-class FieldStopMonitor:
-    def __init__(self, device):
-        self.device = device
 
+class FieldStopMonitor:
+    def __init__(self, device, config: FieldStopConfig):
+        self.device = device
+        self.config = config
+        
     def connect(self):
         self.device.connect()
 
@@ -99,8 +103,14 @@ class FieldStopMonitor:
         if not self.device.is_homed():
             raise RuntimeError("Field-stop rotation stage is not homed")
 
+        stage_angle = float(self.device.get_position())
+        angle = (
+            stage_angle - self.config.horizontal_reference_deg
+        ) % 180.0
+
         return FieldStopPosition(
-            stage_angle_deg=float(self.device.get_position())
+            stage_angle_deg=stage_angle,
+            angle_deg=angle,
         )
 
     def close(self):
