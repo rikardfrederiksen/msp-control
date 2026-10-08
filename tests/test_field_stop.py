@@ -69,6 +69,7 @@ def test_kinesis_device_connect():
     device_manager = MagicMock()
     kcube_class = MagicMock()
     kcube = MagicMock()
+    settings_option = MagicMock()
 
     kcube_class.CreateKCubeDCServo.return_value = kcube
 
@@ -76,6 +77,7 @@ def test_kinesis_device_connect():
         config=FieldStopConfig(),
         device_manager=device_manager,
         kcube_class=kcube_class,
+        settings_option=settings_option,
     )
 
     device.connect()
@@ -84,7 +86,10 @@ def test_kinesis_device_connect():
     kcube_class.CreateKCubeDCServo.assert_called_once_with("27503323")
     kcube.Connect.assert_called_once_with("27503323")
     kcube.WaitForSettingsInitialized.assert_called_once_with(5000)
-    kcube.LoadMotorConfiguration.assert_called_once_with("27503323")
+    kcube.LoadMotorConfiguration.assert_called_once_with(
+        "27503323",
+        settings_option,
+    )
     kcube.StartPolling.assert_called_once_with(250)
 
 def test_kinesis_device_reports_homed_status():
@@ -104,6 +109,27 @@ def test_kinesis_device_reports_homed_status():
 def test_kinesis_device_reads_position():
     kcube = MagicMock()
     kcube.Position = 130.0623
+
+    device = KinesisFieldStopDevice(
+        config=FieldStopConfig(),
+        device_manager=MagicMock(),
+        kcube_class=MagicMock(),
+    )
+    device.device = kcube
+
+    assert device.get_position() == pytest.approx(130.0623)
+
+
+def test_kinesis_device_reads_dotnet_decimal_position():
+    class FakeDotNetDecimal:
+        def ToString(self):
+            return "130.0623"
+
+        def __float__(self):
+            raise TypeError("Cannot convert .NET Decimal directly")
+
+    kcube = MagicMock()
+    kcube.Position = FakeDotNetDecimal()
 
     device = KinesisFieldStopDevice(
         config=FieldStopConfig(),
@@ -146,6 +172,7 @@ def test_kinesis_device_disconnects_if_initialization_fails():
         config=FieldStopConfig(),
         device_manager=device_manager,
         kcube_class=kcube_class,
+        settings_option=MagicMock(),
     )
 
     with pytest.raises(RuntimeError, match="Initialization failed"):
@@ -158,12 +185,31 @@ def test_kinesis_device_disconnects_if_initialization_fails():
 def test_kinesis_device_from_kinesis():
     device_manager = MagicMock()
     kcube_class = MagicMock()
+    settings_option = MagicMock()
 
     with patch(
         "msp_control.hardware.field_stop.load_kinesis",
-        return_value=(device_manager, kcube_class),
+        return_value=(device_manager, kcube_class, settings_option),
     ):
         device = KinesisFieldStopDevice.from_kinesis()
 
     assert device.device_manager is device_manager
     assert device.kcube_class is kcube_class
+    assert device.settings_option is settings_option
+
+
+def test_kinesis_device_rejects_missing_settings_option():
+    device_manager = MagicMock()
+    kcube_class = MagicMock()
+
+    device = KinesisFieldStopDevice(
+        config=FieldStopConfig(),
+        device_manager=device_manager,
+        kcube_class=kcube_class,
+    )
+
+    with pytest.raises(RuntimeError, match="settings option"):
+        device.connect()
+
+    device_manager.BuildDeviceList.assert_not_called()
+    kcube_class.CreateKCubeDCServo.assert_not_called()

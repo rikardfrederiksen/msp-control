@@ -20,13 +20,20 @@ class KinesisFieldStopDevice:
         config: FieldStopConfig,
         device_manager,
         kcube_class,
+        settings_option=None,
     ):
         self.config = config
         self.device_manager = device_manager
         self.kcube_class = kcube_class
+        self.settings_option = settings_option
         self.device = None
 
     def connect(self):
+        if self.settings_option is None:
+            raise RuntimeError(
+                "Kinesis device settings option has not been initialized"
+            )
+
         self.device_manager.BuildDeviceList()
 
         self.device = self.kcube_class.CreateKCubeDCServo(
@@ -39,7 +46,8 @@ class KinesisFieldStopDevice:
                 self.config.settings_timeout_ms
             )
             self.device.LoadMotorConfiguration(
-                self.config.serial_number
+                self.config.serial_number,
+                self.settings_option,
             )
             self.device.StartPolling(
                 self.config.poll_interval_ms
@@ -56,7 +64,12 @@ class KinesisFieldStopDevice:
         return bool(self.device.Status.IsHomed)
 
     def get_position(self) -> float:
-        return float(self.device.Position)
+        position = self.device.Position
+
+        if hasattr(position, "ToString"):
+            return float(position.ToString())
+
+        return float(position)
 
     def close(self):
         if self.device is not None:
@@ -66,12 +79,13 @@ class KinesisFieldStopDevice:
 
     @classmethod
     def from_kinesis(cls, config: FieldStopConfig = FieldStopConfig()):
-        device_manager, kcube_class = load_kinesis(config)
+        device_manager, kcube_class, settings_option = load_kinesis(config)
 
         return cls(
             config=config,
             device_manager=device_manager,
             kcube_class=kcube_class,
+            settings_option=settings_option,
         )
 
 class FieldStopMonitor:
@@ -107,9 +121,24 @@ def load_kinesis(config: FieldStopConfig):
         ) from exc
 
     clr.AddReference("Thorlabs.MotionControl.DeviceManagerCLI")
+    clr.AddReference("Thorlabs.MotionControl.GenericMotorCLI")
     clr.AddReference("Thorlabs.MotionControl.KCube.DCServoCLI")
 
+    from System import Enum
     from Thorlabs.MotionControl.DeviceManagerCLI import DeviceManagerCLI
     from Thorlabs.MotionControl.KCube.DCServoCLI import KCubeDCServo
 
-    return DeviceManagerCLI, KCubeDCServo
+    # Find the two-argument LoadMotorConfiguration overload.
+    kcube_type = clr.GetClrType(KCubeDCServo)
+
+    method = next(
+        m for m in kcube_type.GetMethods()
+        if m.Name == "LoadMotorConfiguration"
+        and len(m.GetParameters()) == 2
+    )
+
+    # Retrieve the nested .NET enum and select UseDeviceSettings.
+    enum_type = method.GetParameters()[1].ParameterType
+    settings_option = Enum.Parse(enum_type, "UseDeviceSettings")
+
+    return DeviceManagerCLI, KCubeDCServo, settings_option
