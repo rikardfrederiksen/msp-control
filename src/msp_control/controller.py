@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from msp_control.metadata import MetadataCollector
 from msp_control.clock import Clock
 from msp_control.acquisition import AcquisitionController
 from msp_control.config import ScanConfig
@@ -20,9 +21,11 @@ class MSPController:
         self,
         acquisition: AcquisitionController,
         clock: Clock | None = None,
+        metadata_collector: MetadataCollector | None = None,
     ):
         self.acquisition = acquisition
         self.clock = clock if clock is not None else Clock()
+        self.metadata_collector = metadata_collector
 
         self.experiment: Experiment | None = None
         self.filename: Path | None = None
@@ -42,6 +45,13 @@ class MSPController:
         baseline_index = self.experiment.next_baseline_index
         timestamp = self.clock.now()
 
+        # Collect metadata before acquisition, without committing it.
+        pending_metadata = (
+            self.metadata_collector.collect()
+            if self.metadata_collector is not None
+            else {}
+        )
+
         raw = self.acquisition.acquire(config)
 
         baseline = process_baseline(
@@ -51,6 +61,9 @@ class MSPController:
             polarization=polarization,
             timestamp=timestamp,
         )
+        
+        # Attach metadata only after successful acquisition and processing.
+        baseline.metadata.update(pending_metadata)
 
         write_baseline(self.filename, baseline)
 
@@ -87,6 +100,13 @@ class MSPController:
                 "Baseline and specimen scan configurations are incompatible"
             )
 
+        # Collect metadata before acquisition, without committing it.
+        pending_metadata = (
+            self.metadata_collector.collect()
+            if self.metadata_collector is not None
+            else {}
+        )
+        
         raw = self.acquisition.acquire(config)
 
         scan = process_scan(
@@ -98,6 +118,10 @@ class MSPController:
             timestamp=timestamp,
         )
 
+        # Attach metadata only after successful acquisition and processing.
+        scan.metadata.update(pending_metadata)
+
+        # Persist the completed scan.
         write_scan(
             self.filename,
             scan,

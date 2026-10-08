@@ -1,8 +1,11 @@
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pytest
+from unittest.mock import MagicMock
 
+from msp_control.metadata import MetadataCollector
 from msp_control.acquisition import RawAcquisition
 from msp_control.config import ScanConfig
 from msp_control.controller import MSPController
@@ -1527,3 +1530,260 @@ def test_add_event_does_not_modify_experiment_on_storage_failure(
         controller.add_event("11-cis retinal added")
 
     assert controller.experiment.events == []
+
+
+def test_controller_accepts_metadata_collector():
+    acquisition = MagicMock()
+    collector = MagicMock(spec=MetadataCollector)
+
+    controller = MSPController(
+        acquisition=acquisition,
+        metadata_collector=collector,
+    )
+
+    assert controller.metadata_collector is collector
+
+
+def test_scan_metadata_collected_before_acquisition():
+    calls = []
+
+    acquisition = MagicMock()
+    acquisition.acquire.side_effect = lambda config: (
+        calls.append("acquire")
+    )
+
+    collector = MagicMock(spec=MetadataCollector)
+    collector.collect.side_effect = lambda: (
+        calls.append("collect") or {}
+    )
+
+    controller = MSPController(
+        acquisition=acquisition,
+        metadata_collector=collector,
+    )
+
+    controller.experiment = MagicMock()
+    controller.filename = Path("test.h5")
+
+    baseline = controller.experiment.get_baseline.return_value
+    baseline.polarization = Polarization.TRANSVERSE
+    baseline.config.is_compatible_with.return_value = True
+
+    # Stop immediately after acquisition, so no processing
+    # or HDF5 writing takes place.
+    acquisition.acquire.side_effect = lambda config: (
+        calls.append("acquire"),
+        (_ for _ in ()).throw(RuntimeError("Acquisition failed"))
+    )[-1]
+
+    with pytest.raises(RuntimeError, match="Acquisition failed"):
+        controller.acquire_scan(
+            config=MagicMock(spec=ScanConfig),
+            polarization=Polarization.TRANSVERSE,
+            baseline_index=0,
+        )
+
+    assert calls == ["collect", "acquire"]
+    controller.experiment.add_scan.assert_not_called()
+
+
+def test_scan_metadata_attached_after_successful_acquisition(
+    tmp_path, monkeypatch
+):
+    import msp_control.controller as controller_module
+
+    acquisition = MagicMock()
+    collector = MagicMock(spec=MetadataCollector)
+    collector.collect.return_value = {
+        "field_stop_stage_angle_deg": 130.0,
+        "field_stop_angle_deg": 90.0,
+        "field_stop_horizontal_reference_deg": 40.0,
+    }
+
+    controller = MSPController(
+        acquisition=acquisition,
+        metadata_collector=collector,
+    )
+
+    controller.experiment = MagicMock()
+    controller.filename = tmp_path / "test.h5"
+
+    baseline = controller.experiment.get_baseline.return_value
+    baseline.polarization = Polarization.TRANSVERSE
+    baseline.config.is_compatible_with.return_value = True
+
+    scan = MagicMock()
+    scan.metadata = {}
+
+    process_mock = MagicMock(return_value=scan)
+    write_mock = MagicMock()
+
+    monkeypatch.setattr(
+        controller_module, "process_scan", process_mock
+    )
+    monkeypatch.setattr(
+        controller_module, "write_scan", write_mock
+    )
+
+    result = controller.acquire_scan(
+        config=MagicMock(spec=ScanConfig),
+        polarization=Polarization.TRANSVERSE,
+        baseline_index=0,
+    )
+
+    assert result is scan
+
+    assert scan.metadata == {
+        "field_stop_stage_angle_deg": 130.0,
+        "field_stop_angle_deg": 90.0,
+        "field_stop_horizontal_reference_deg": 40.0,
+    }
+
+    write_mock.assert_called_once_with(
+        controller.filename,
+        scan,
+    )
+    controller.experiment.add_scan.assert_called_once_with(scan)
+
+
+def test_baseline_metadata_attached_after_successful_acquisition(
+    tmp_path, monkeypatch
+):
+    import msp_control.controller as controller_module
+
+    acquisition = MagicMock()
+    collector = MagicMock(spec=MetadataCollector)
+    collector.collect.return_value = {
+        "field_stop_stage_angle_deg": 130.0,
+        "field_stop_angle_deg": 90.0,
+        "field_stop_horizontal_reference_deg": 40.0,
+    }
+
+    controller = MSPController(
+        acquisition=acquisition,
+        metadata_collector=collector,
+    )
+
+    controller.experiment = MagicMock()
+    controller.filename = tmp_path / "test.h5"
+
+    baseline = MagicMock()
+    baseline.metadata = {}
+
+    process_mock = MagicMock(return_value=baseline)
+    write_mock = MagicMock()
+
+    monkeypatch.setattr(
+        controller_module, "process_baseline", process_mock
+    )
+    monkeypatch.setattr(
+        controller_module, "write_baseline", write_mock
+    )
+
+    result = controller.acquire_baseline(
+        config=MagicMock(spec=ScanConfig),
+        polarization=Polarization.TRANSVERSE,
+    )
+
+    assert result is baseline
+
+    assert baseline.metadata == {
+        "field_stop_stage_angle_deg": 130.0,
+        "field_stop_angle_deg": 90.0,
+        "field_stop_horizontal_reference_deg": 40.0,
+    }
+
+    write_mock.assert_called_once_with(
+        controller.filename,
+        baseline,
+    )
+    controller.experiment.add_baseline.assert_called_once_with(
+        baseline
+    )
+
+
+def test_failed_scan_does_not_commit_metadata(tmp_path):
+    import h5py
+
+    acquisition = MagicMock()
+    acquisition.acquire.side_effect = RuntimeError(
+        "Simulated acquisition failure"
+    )
+
+    collector = MagicMock(spec=MetadataCollector)
+    collector.collect.return_value = {
+        "field_stop_angle_deg": 90.0,
+    }
+
+    controller = MSPController(
+        acquisition=acquisition,
+        metadata_collector=collector,
+    )
+
+    filename = tmp_path / "experiment.h5"
+    controller.create_new_experiment_file(filename)
+
+    # Create a valid baseline so scan validation succeeds.
+    baseline = MagicMock()
+    baseline.baseline_index = 0
+    baseline.polarization = Polarization.TRANSVERSE
+    baseline.config.is_compatible_with.return_value = True
+
+    controller.experiment.add_baseline(baseline)
+
+    with pytest.raises(
+        RuntimeError, match="Simulated acquisition failure"
+    ):
+        controller.acquire_scan(
+            config=MagicMock(spec=ScanConfig),
+            polarization=Polarization.TRANSVERSE,
+            baseline_index=0,
+        )
+
+    collector.collect.assert_called_once_with()
+
+    # The failed scan must not appear in Experiment.
+    assert controller.experiment.scans == []
+
+    # Nor should it appear in HDF5.
+    with h5py.File(filename, "r") as h5:
+        assert len(h5.get("scans", {})) == 0
+        assert len(h5.get("_pending", {})) == 0
+
+
+def test_failed_baseline_does_not_commit_metadata(tmp_path):
+    import h5py
+
+    acquisition = MagicMock()
+    acquisition.acquire.side_effect = RuntimeError(
+        "Simulated baseline failure"
+    )
+
+    collector = MagicMock(spec=MetadataCollector)
+    collector.collect.return_value = {
+        "field_stop_angle_deg": 90.0,
+    }
+
+    controller = MSPController(
+        acquisition=acquisition,
+        metadata_collector=collector,
+    )
+
+    filename = tmp_path / "experiment.h5"
+    controller.create_new_experiment_file(filename)
+
+    with pytest.raises(
+        RuntimeError, match="Simulated baseline failure"
+    ):
+        controller.acquire_baseline(
+            config=MagicMock(spec=ScanConfig),
+            polarization=Polarization.TRANSVERSE,
+        )
+
+    collector.collect.assert_called_once_with()
+
+    assert controller.experiment.baselines == []
+
+    with h5py.File(filename, "r") as h5:
+        assert len(h5.get("baselines", {})) == 0
+        assert len(h5.get("_pending", {})) == 0
