@@ -61,6 +61,44 @@ class Scan:
 
 
 @dataclass
+class Bleach:
+    """A bleaching exposure and its recorded LED monitor waveform."""
+
+    bleach_index: int
+    event_id: int
+    timestamp: datetime
+
+    led_channel: int
+    command_voltage: float
+    requested_duration_s: float
+    nd_filter: float
+
+    monitor_time_s: np.ndarray
+    monitor_voltage: np.ndarray
+
+    completed: bool
+    calibration_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if not isinstance(self.timestamp, datetime):
+            raise TypeError("timestamp must be a datetime")
+
+        if self.requested_duration_s < 0:
+            raise ValueError("requested duration cannot be negative")
+
+        if not 0 <= self.command_voltage <= 10:
+            raise ValueError("command voltage must be between 0 and 10 V")
+
+        if len(self.monitor_time_s) != len(self.monitor_voltage):
+            raise ValueError(
+                "monitor time and voltage arrays must have equal length"
+            )
+        if self.nd_filter < 0:
+            raise ValueError("ND filter cannot be negative")
+
+
+@dataclass
 class ScanGroup:
     scan_group_id: int
     label: str = ""
@@ -101,6 +139,7 @@ class Experiment:
     shared_metadata: dict[str, Any] = field(default_factory=dict)
     baselines: list[Baseline] = field(default_factory=list)
     scans: list[Scan] = field(default_factory=list)
+    bleaches: list[Bleach] = field(default_factory=list)
     scan_groups: list[ScanGroup] = field(default_factory=list)
     events: list[Event] = field(default_factory=list)
 
@@ -192,6 +231,45 @@ class Experiment:
         return max(
             scan.scan_index
             for scan in self.scans
+        ) + 1
+
+    def add_bleach(self, bleach: Bleach) -> None:
+        """Add a bleaching exposure to the experiment."""
+
+        if any(
+            existing.bleach_index == bleach.bleach_index
+            for existing in self.bleaches
+        ):
+            raise ValueError(
+                f"Bleach index {bleach.bleach_index} already exists"
+            )
+
+        self.get_event(bleach.event_id)
+
+        self.bleaches.append(bleach)
+
+
+    def get_bleach(self, bleach_index: int) -> Bleach:
+        """Return a bleaching exposure by index."""
+
+        for bleach in self.bleaches:
+            if bleach.bleach_index == bleach_index:
+                return bleach
+
+        raise KeyError(
+            f"Bleach index {bleach_index} does not exist"
+        )
+
+    @property
+    def next_bleach_index(self) -> int:
+        """Return the next available bleach index."""
+
+        if not self.bleaches:
+            return 0
+
+        return max(
+            bleach.bleach_index
+            for bleach in self.bleaches
         ) + 1
 
     def add_scan_group(

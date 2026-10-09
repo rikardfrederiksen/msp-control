@@ -5,7 +5,15 @@ import h5py
 import numpy as np
 
 from msp_control.config import ScanConfig
-from msp_control.data.model import Baseline, Polarization, Scan, ScanGroup, Experiment, Event
+from msp_control.data.model import (
+    Baseline,
+    Polarization,
+    Scan,
+    ScanGroup,
+    Experiment,
+    Event,
+    Bleach,
+)
 
 
 FORMAT_NAME = "msp-control"
@@ -533,11 +541,18 @@ def read_experiment(
 
         if "events" in h5:
             event_ids = [
+                int(group.attrs["event_id"])
+                for group in h5["events"].values()
+            ]
 
-        int(group.attrs["event_id"])
-        for group in h5["events"].values()
-    ]
+        bleach_indices = []
 
+        if "bleaches" in h5:
+            bleach_indices = [
+                int(group.attrs["bleach_index"])
+                for group in h5["bleaches"].values()
+            ]
+            
     for baseline_index in baseline_indices:
         baseline = read_baseline(
             filename,
@@ -559,12 +574,20 @@ def read_experiment(
         )
         experiment.scan_groups.append(scan_group)
 
+        
     for event_id in event_ids:
         event = read_event(
             filename,
             event_id,
         )
         experiment.add_event(event)
+
+    for bleach_index in bleach_indices:
+        bleach = read_bleach(
+            filename,
+            bleach_index,
+        )
+        experiment.add_bleach(bleach)
 
     return experiment
 
@@ -591,6 +614,131 @@ def write_experiment(
 
     for event in experiment.events:
         write_event(filename, event)
+
+    for bleach in experiment.bleaches:
+        write_bleach(filename, bleach)
+
+
+def write_bleach(
+    filename: str | Path,
+    bleach: Bleach,
+) -> None:
+    """Write a bleaching exposure to an MSP HDF5 file."""
+
+    _validate_metadata(bleach.metadata)
+
+    with h5py.File(filename, "a") as h5:
+        _initialize_file(h5)
+
+        bleaches_group = h5.require_group("bleaches")
+        events_group = h5.require_group("events")
+        pending_group = h5.require_group("_pending")
+
+        event_name = f"event_{bleach.event_id:03d}"
+
+        if event_name not in events_group:
+            raise ValueError(
+                f"Event {bleach.event_id} does not exist "
+                "in the HDF5 file"
+            )
+
+        group_name = f"bleach_{bleach.bleach_index:03d}"
+
+        if group_name in bleaches_group:
+            raise ValueError(
+                f"Bleach {bleach.bleach_index} already exists"
+            )
+
+        if group_name in pending_group:
+            del pending_group[group_name]
+
+        bleach_group = pending_group.create_group(group_name)
+
+        try:
+            bleach_group.attrs["bleach_index"] = bleach.bleach_index
+            bleach_group.attrs["event_id"] = bleach.event_id
+            bleach_group.attrs["timestamp"] = (
+                bleach.timestamp.isoformat(sep=" ")
+            )
+            bleach_group.attrs["led_channel"] = bleach.led_channel
+            bleach_group.attrs["command_voltage"] = bleach.command_voltage
+            bleach_group.attrs["requested_duration_s"] = (
+                bleach.requested_duration_s
+            )
+            bleach_group.attrs["nd_filter"] = bleach.nd_filter
+            bleach_group.attrs["completed"] = bleach.completed
+
+            if bleach.calibration_id is not None:
+                bleach_group.attrs["calibration_id"] = (
+                    bleach.calibration_id
+                )
+
+            data_group = bleach_group.create_group("data")
+            data_group.create_dataset(
+                "monitor_time_s",
+                data=bleach.monitor_time_s,
+            )
+            data_group.create_dataset(
+                "monitor_voltage",
+                data=bleach.monitor_voltage,
+            )
+
+            metadata_group = bleach_group.create_group("metadata")
+            _write_metadata(metadata_group, bleach.metadata)
+
+            _commit_pending_group(
+                h5,
+                f"_pending/{group_name}",
+                f"bleaches/{group_name}",
+            )
+
+        except Exception:
+            if group_name in pending_group:
+                del pending_group[group_name]
+                h5.flush()
+            raise
+
+
+def read_bleach(
+    filename: str | Path,
+    bleach_index: int,
+) -> Bleach:
+    """Read a bleaching exposure from an MSP HDF5 file."""
+
+    with h5py.File(filename, "r") as h5:
+        _validate_file(h5)
+
+        bleach_group = h5[
+            f"bleaches/bleach_{bleach_index:03d}"
+        ]
+
+        data_group = bleach_group["data"]
+        metadata_group = bleach_group["metadata"]
+
+        timestamp = datetime.fromisoformat(
+            bleach_group.attrs["timestamp"]
+        )
+
+        return Bleach(
+            bleach_index=int(bleach_group.attrs["bleach_index"]),
+            event_id=int(bleach_group.attrs["event_id"]),
+            timestamp=timestamp,
+            led_channel=int(bleach_group.attrs["led_channel"]),
+            command_voltage=float(
+                bleach_group.attrs["command_voltage"]
+            ),
+            requested_duration_s=float(
+                bleach_group.attrs["requested_duration_s"]
+            ),
+            nd_filter=float(bleach_group.attrs["nd_filter"]),
+            monitor_time_s=data_group["monitor_time_s"][:],
+            monitor_voltage=data_group["monitor_voltage"][:],
+            completed=bool(bleach_group.attrs["completed"]),
+            calibration_id=bleach_group.attrs.get(
+                "calibration_id", None
+            ),
+            metadata=_read_metadata(metadata_group),
+        )
 
 
 def write_event(
