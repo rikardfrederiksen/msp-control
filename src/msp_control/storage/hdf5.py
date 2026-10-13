@@ -661,7 +661,12 @@ def write_bleach(
                 bleach.timestamp.isoformat(sep=" ")
             )
             bleach_group.attrs["led_channel"] = bleach.led_channel
-            bleach_group.attrs["command_voltage"] = bleach.command_voltage
+            
+            bleach_group.attrs["control_mode"] = bleach.control_mode
+
+            if bleach.command_voltage is not None:
+                bleach_group.attrs["command_voltage"] = bleach.command_voltage
+            
             bleach_group.attrs["requested_duration_s"] = (
                 bleach.requested_duration_s
             )
@@ -724,9 +729,8 @@ def read_bleach(
             event_id=int(bleach_group.attrs["event_id"]),
             timestamp=timestamp,
             led_channel=int(bleach_group.attrs["led_channel"]),
-            command_voltage=float(
-                bleach_group.attrs["command_voltage"]
-            ),
+            control_mode=bleach_group.attrs.get("control_mode", "analog"),
+            command_voltage=bleach_group.attrs.get("command_voltage", None),
             requested_duration_s=float(
                 bleach_group.attrs["requested_duration_s"]
             ),
@@ -784,6 +788,29 @@ def write_event(
                 h5.flush()
 
             raise
+
+
+def update_event(
+    filename: str | Path,
+    event_id: int,
+    description: str,
+) -> None:
+    """Update the description of an existing Event."""
+
+    with h5py.File(filename, "r+") as h5:
+        _validate_file(h5)
+
+        event_path = f"events/event_{event_id:03d}"
+
+        if event_path not in h5:
+            raise KeyError(
+                f"Event {event_id} does not exist"
+            )
+
+        event_group = h5[event_path]
+        event_group.attrs["description"] = description
+
+        h5.flush()
 
 
 def read_event(

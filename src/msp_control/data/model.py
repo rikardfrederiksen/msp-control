@@ -69,9 +69,11 @@ class Bleach:
     timestamp: datetime
 
     led_channel: int
-    command_voltage: float
+    command_voltage: float | None
     requested_duration_s: float
     nd_filter: float
+
+    control_mode: str
 
     monitor_time_s: np.ndarray
     monitor_voltage: np.ndarray
@@ -87,8 +89,18 @@ class Bleach:
         if self.requested_duration_s < 0:
             raise ValueError("requested duration cannot be negative")
 
-        if not 0 <= self.command_voltage <= 10:
-            raise ValueError("command voltage must be between 0 and 10 V")
+        if self.control_mode not in ("analog", "digital"):
+            raise ValueError("control_mode must be 'analog' or 'digital'")
+
+        if self.control_mode == "analog":
+            if self.command_voltage is None:
+                raise ValueError("Analog bleach requires command_voltage")
+
+            if not 0 <= self.command_voltage <= 10:
+                raise ValueError("command voltage must be between 0 and 10 V")
+
+        elif self.command_voltage is not None:
+            raise ValueError("Digital bleach must have command_voltage=None")
 
         if len(self.monitor_time_s) != len(self.monitor_voltage):
             raise ValueError(

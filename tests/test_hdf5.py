@@ -26,6 +26,7 @@ from msp_control.storage.hdf5 import (
     create_experiment_file,
     read_event,
     write_event,
+    update_event,
 )
 
 
@@ -1132,3 +1133,45 @@ def test_read_experiment_without_events(tmp_path, baseline, scan):
     loaded = read_experiment(filename)
 
     assert loaded.events == []
+
+
+def test_update_event_description(tmp_path):
+    filename = tmp_path / "experiment.h5"
+    create_experiment_file(filename)
+
+    original_event = Event(
+        event_id=0,
+        timestamp=datetime(2026, 10, 13, 10, 30),
+        description="Bleach",
+    )
+
+    write_event(filename, original_event)
+
+    update_event(
+        filename,
+        event_id=0,
+        description="Failed bleach: Monitor acquisition failed",
+    )
+
+    updated = read_event(filename, event_id=0)
+
+    assert updated.event_id == original_event.event_id
+    assert updated.timestamp == original_event.timestamp
+    assert updated.description == (
+        "Failed bleach: Monitor acquisition failed"
+    )
+
+
+def test_update_nonexistent_event(tmp_path):
+    filename = tmp_path / "experiment.h5"
+    create_experiment_file(filename)
+
+    with pytest.raises(KeyError, match="Event 0 does not exist"):
+        update_event(
+            filename,
+            event_id=0,
+            description="Failed bleach",
+        )
+
+    with h5py.File(filename, "r") as h5:
+        assert "events/event_000" not in h5

@@ -35,6 +35,7 @@ def test_bleach_hdf5_round_trip(tmp_path):
         command_voltage=2.5,
         requested_duration_s=10.0,
         nd_filter=2.0,
+        control_mode="analog",
         monitor_time_s=np.array([0.0, 0.1, 0.2]),
         monitor_voltage=np.array([0.0, 0.5, 0.5]),
         completed=True,
@@ -55,6 +56,7 @@ def test_bleach_hdf5_round_trip(tmp_path):
     assert restored.completed is True
     assert restored.calibration_id == bleach.calibration_id
     assert restored.metadata == bleach.metadata
+    assert restored.control_mode == "analog"
 
     np.testing.assert_array_equal(
         restored.monitor_time_s,
@@ -64,8 +66,6 @@ def test_bleach_hdf5_round_trip(tmp_path):
         restored.monitor_voltage,
         bleach.monitor_voltage,
     )
-
-
 
 
 def test_interrupted_bleach_round_trip(tmp_path):
@@ -83,6 +83,7 @@ def test_interrupted_bleach_round_trip(tmp_path):
         command_voltage=2.5,
         requested_duration_s=10.0,
         nd_filter=2.0,
+        control_mode="analog",
         monitor_time_s=np.array([0.0, 0.1]),
         monitor_voltage=np.array([0.0, 0.5]),
         completed=False,
@@ -120,6 +121,7 @@ def test_duplicate_bleach_does_not_overwrite(tmp_path):
         command_voltage=2.5,
         requested_duration_s=10.0,
         nd_filter=2.0,
+        control_mode="analog",
         monitor_time_s=np.array([0.0, 0.1]),
         monitor_voltage=np.array([0.0, 0.5]),
         completed=True,
@@ -147,6 +149,7 @@ def test_bleach_requires_existing_event(tmp_path):
         command_voltage=2.5,
         requested_duration_s=10.0,
         nd_filter=2.0,
+        control_mode="analog",
         monitor_time_s=np.array([0.0, 0.1]),
         monitor_voltage=np.array([0.0, 0.5]),
         completed=True,
@@ -186,6 +189,7 @@ def test_experiment_with_bleach_round_trip(
         command_voltage=2.5,
         requested_duration_s=10.0,
         nd_filter=2.0,
+        control_mode="analog",
         monitor_time_s=np.array([0.0, 0.1, 0.2]),
         monitor_voltage=np.array([0.0, 0.5, 0.5]),
         completed=True,
@@ -215,3 +219,57 @@ def test_experiment_with_bleach_round_trip(
 
     assert restored.next_bleach_index == 1
     assert restored.next_event_id == 1
+
+
+def test_digital_bleach_hdf5_round_trip(tmp_path):
+    filename = tmp_path / "experiment.h5"
+    create_experiment_file(filename)
+
+    timestamp = datetime(2026, 10, 13, 12, 0)
+
+    event = Event(
+        event_id=0,
+        timestamp=timestamp,
+        description="505 nm bleach started",
+    )
+    write_event(filename, event)
+
+    bleach = Bleach(
+        bleach_index=0,
+        event_id=0,
+        timestamp=timestamp,
+        led_channel=2,
+        control_mode="digital",
+        command_voltage=None,
+        requested_duration_s=10.0,
+        nd_filter=1.0,
+        monitor_time_s=np.array([0.0, 0.1, 10.0, 10.1]),
+        monitor_voltage=np.array([0.0, 2.5, 2.5, 0.0]),
+        completed=True,
+        calibration_id="msp_led505_20261013",
+        metadata={"notes": "Digital LED exposure"},
+    )
+
+    write_bleach(filename, bleach)
+    restored = read_bleach(filename, 0)
+
+    assert restored.bleach_index == bleach.bleach_index
+    assert restored.event_id == bleach.event_id
+    assert restored.timestamp == bleach.timestamp
+    assert restored.led_channel == 2
+    assert restored.control_mode == "digital"
+    assert restored.command_voltage is None
+    assert restored.requested_duration_s == bleach.requested_duration_s
+    assert restored.nd_filter == bleach.nd_filter
+    assert restored.completed is True
+    assert restored.calibration_id == bleach.calibration_id
+    assert restored.metadata == bleach.metadata
+
+    np.testing.assert_array_equal(
+        restored.monitor_time_s,
+        bleach.monitor_time_s,
+    )
+    np.testing.assert_array_equal(
+        restored.monitor_voltage,
+        bleach.monitor_voltage,
+    )

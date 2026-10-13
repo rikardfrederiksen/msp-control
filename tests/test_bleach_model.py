@@ -15,6 +15,7 @@ def make_bleach(**overrides):
         command_voltage=2.5,
         requested_duration_s=10.0,
         nd_filter=2.0,
+        control_mode="analog",
         monitor_time_s=np.array([0.0, 0.1, 0.2]),
         monitor_voltage=np.array([0.0, 0.5, 0.5]),
         completed=True,
