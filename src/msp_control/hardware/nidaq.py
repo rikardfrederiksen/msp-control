@@ -81,6 +81,7 @@ class NIDaq:
         self._ai_task: nidaqmx.Task | None = None
         self._bleach_do_task: nidaqmx.Task | None = None
         self._bleach_ai_task: nidaqmx.Task | None = None
+        self._bleach_ao_task: nidaqmx.Task | None = None
 
     def configure_ai(self) -> None:
         """Create and configure the PMT analog-input task."""
@@ -108,6 +109,10 @@ class NIDaq:
         if self._bleach_ai_task is not None:
             self._bleach_ai_task.close()
             self._bleach_ai_task = None
+
+        if self._bleach_ao_task is not None:
+            self._bleach_ao_task.close()
+            self._bleach_ao_task = None
 
     def configure_timing(self, total_samples: int) -> None:
         """Configure finite acquisition using the external Optoscan clock."""
@@ -167,8 +172,8 @@ class NIDaq:
     ) -> None:
         """Configure a finite digital output waveform for the 505 nm LED."""
 
-        if self._bleach_do_task is not None:
-            raise RuntimeError("Bleach digital output is already configured")
+        if self._bleach_do_task is not None or self._bleach_ao_task is not None:
+            raise RuntimeError("Bleach output is already configured")
 
         waveform = np.asarray(waveform)
 
@@ -209,6 +214,64 @@ class NIDaq:
             raise
 
         self._bleach_do_task = task
+
+    def configure_bleach_analog_output(
+        self,
+        waveform: np.ndarray,
+        sample_rate_hz: float,
+    ) -> None:
+        """Configure a finite analog output waveform for the 617 nm LED."""
+
+        if self._bleach_ao_task is not None or self._bleach_do_task is not None:
+            raise RuntimeError("Bleach output is already configured")
+
+        waveform = np.asarray(waveform)
+
+        if waveform.ndim != 1:
+            raise ValueError("Analog waveform must be a 1D array")
+
+        if len(waveform) < 2:
+            raise ValueError("Analog waveform must contain at least two samples")
+
+        if not np.all(np.isfinite(waveform)):
+            raise ValueError("Analog waveform must contain finite values")
+
+        if np.any(waveform < 0.0) or np.any(waveform > 10.0):
+            raise ValueError("Analog waveform must be between 0 and 10 V")
+
+        if waveform[-1] != 0.0:
+            raise ValueError("Analog waveform must end with LED off (0 V)")
+
+        if not np.isfinite(sample_rate_hz) or sample_rate_hz <= 0:
+            raise ValueError("sample_rate_hz must be positive")
+
+        task = nidaqmx.Task()
+
+        try:
+            task.ao_channels.add_ao_voltage_chan(
+                self.config.bleach_617_output_channel,
+                min_val=0.0,
+                max_val=10.0,
+            )
+
+            task.timing.cfg_samp_clk_timing(
+                rate=sample_rate_hz,
+                source=f"/{self.config.device}/ai/SampleClock",
+                active_edge=Edge.RISING,
+                sample_mode=AcquisitionType.FINITE,
+                samps_per_chan=len(waveform),
+            )
+
+            task.write(
+                waveform.tolist(),
+                auto_start=False,
+            )
+
+        except Exception:
+            task.close()
+            raise
+
+        self._bleach_ao_task = task
 
     def configure_bleach_monitor(
         self,
@@ -257,13 +320,25 @@ class NIDaq:
     def start_bleach_tasks(self) -> None:
         """Start synchronized bleach output and monitor acquisition."""
 
-        if self._bleach_do_task is None:
-            raise RuntimeError("Bleach digital output is not configured")
+        if self._bleach_do_task is not None and self._bleach_ao_task is not None:
+            raise RuntimeError(
+                "Analog and digital bleach outputs cannot be active simultaneously"
+            )
+
+        output_task = (
+            self._bleach_ao_task
+            if self._bleach_ao_task is not None
+            else self._bleach_do_task
+        )
+
+        if output_task is None:
+            raise RuntimeError("Bleach output is not configured")
 
         if self._bleach_ai_task is None:
             raise RuntimeError("Bleach monitor is not configured")
 
-        self._bleach_do_task.start()
+        # Arm the output before starting the monitor's sample clock.
+        output_task.start()
         self._bleach_ai_task.start()
 
     def read_bleach_monitor(
@@ -288,17 +363,28 @@ class NIDaq:
         )
 
         return np.asarray(data, dtype=float)
-
+        
     def wait_for_bleach_output(self, timeout: float) -> None:
-        """Wait for the digital bleach waveform to complete."""
+        """Wait for the analog or digital bleach waveform to complete."""
 
-        if self._bleach_do_task is None:
-            raise RuntimeError("Bleach digital output is not configured")
+        if self._bleach_do_task is not None and self._bleach_ao_task is not None:
+            raise RuntimeError(
+                "Analog and digital bleach outputs cannot be active simultaneously"
+            )
+
+        output_task = (
+            self._bleach_ao_task
+            if self._bleach_ao_task is not None
+            else self._bleach_do_task
+        )
+
+        if output_task is None:
+            raise RuntimeError("Bleach output is not configured")
 
         if timeout <= 0:
             raise ValueError("timeout must be positive")
 
-        self._bleach_do_task.wait_until_done(timeout=timeout)
+        output_task.wait_until_done(timeout=timeout)
 
     def stop_bleach_digital_output(self) -> None:
         """Stop the bleach waveform and explicitly switch the LED off."""
@@ -318,6 +404,29 @@ class NIDaq:
                 self.config.bleach_505_output_channel,
                 False,
             )
+
+    def stop_bleach_analog_output(self) -> None:
+        """Stop the analog bleach waveform and explicitly set the LED to 0 V."""
+
+        task = self._bleach_ao_task
+
+        try:
+            if task is not None:
+                try:
+                    task.stop()
+                finally:
+                    task.close()
+        finally:
+            self._bleach_ao_task = None
+
+            # Explicitly drive the 617 nm LED control voltage to zero.
+            with nidaqmx.Task() as zero_task:
+                zero_task.ao_channels.add_ao_voltage_chan(
+                    self.config.bleach_617_output_channel,
+                    min_val=0.0,
+                    max_val=10.0,
+                )
+                zero_task.write(0.0)
 
     def open_shutter(self) -> None:
         """Open the PMT shutter."""

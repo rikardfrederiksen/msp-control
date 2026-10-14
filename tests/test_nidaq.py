@@ -373,8 +373,11 @@ def test_wait_for_bleach_output():
 def test_wait_for_bleach_output_requires_task():
     daq = NIDaq(NIDaqConfig())
 
-    with pytest.raises(RuntimeError, match="Bleach digital output"):
-        daq.wait_for_bleach_output(timeout=12.0)
+    with pytest.raises(
+        RuntimeError,
+        match="Bleach output is not configured",
+    ):
+        daq.wait_for_bleach_output(timeout=2.0)
 
 
 def test_stop_bleach_digital_output():
@@ -424,4 +427,176 @@ def test_stop_bleach_digital_output_when_stop_fails():
             False,
         )
 
+    assert daq._bleach_do_task is None
+
+
+def test_configure_bleach_analog_output():
+    config = NIDaqConfig(device="Dev1")
+    daq = NIDaq(config)
+
+    waveform = np.array([0.0, 2.5, 5.0, 2.5, 0.0])
+
+    with patch("msp_control.hardware.nidaq.nidaqmx.Task") as task_class:
+        task = task_class.return_value
+
+        daq.configure_bleach_analog_output(
+            waveform=waveform,
+            sample_rate_hz=1000.0,
+        )
+
+        task.ao_channels.add_ao_voltage_chan.assert_called_once_with(
+            "Dev1/ao1",
+            min_val=0.0,
+            max_val=10.0,
+        )
+
+        task.timing.cfg_samp_clk_timing.assert_called_once_with(
+            rate=1000.0,
+            source="/Dev1/ai/SampleClock",
+            active_edge=Edge.RISING,
+            sample_mode=AcquisitionType.FINITE,
+            samps_per_chan=5,
+        )
+
+        task.write.assert_called_once_with(
+            waveform.tolist(),
+            auto_start=False,
+        )
+
+
+def test_start_bleach_tasks_with_analog_output():
+    daq = NIDaq(NIDaqConfig(device="Dev1"))
+
+    analog_task = MagicMock()
+    monitor_task = MagicMock()
+
+    daq._bleach_ao_task = analog_task
+    daq._bleach_ai_task = monitor_task
+
+    daq.start_bleach_tasks()
+
+    analog_task.start.assert_called_once_with()
+    monitor_task.start.assert_called_once_with()
+
+
+def test_wait_for_bleach_analog_output():
+    daq = NIDaq(NIDaqConfig(device="Dev1"))
+
+    analog_task = MagicMock()
+    daq._bleach_ao_task = analog_task
+
+    daq.wait_for_bleach_output(timeout=2.0)
+
+    analog_task.wait_until_done.assert_called_once_with(
+        timeout=2.0
+    )
+
+
+def test_stop_bleach_analog_output():
+    daq = NIDaq(NIDaqConfig(device="Dev1"))
+
+    analog_task = MagicMock()
+    daq._bleach_ao_task = analog_task
+
+    with patch("msp_control.hardware.nidaq.nidaqmx.Task") as task_class:
+        zero_task = task_class.return_value.__enter__.return_value
+
+        daq.stop_bleach_analog_output()
+
+        analog_task.stop.assert_called_once_with()
+        analog_task.close.assert_called_once_with()
+
+        zero_task.ao_channels.add_ao_voltage_chan.assert_called_once_with(
+            "Dev1/ao1",
+            min_val=0.0,
+            max_val=10.0,
+        )
+
+        zero_task.write.assert_called_once_with(0.0)
+
+        assert daq._bleach_ao_task is None
+
+
+def test_stop_bleach_analog_output_when_stop_fails():
+    daq = NIDaq(NIDaqConfig(device="Dev1"))
+
+    analog_task = MagicMock()
+    analog_task.stop.side_effect = RuntimeError("Stop failed")
+    daq._bleach_ao_task = analog_task
+
+    with patch("msp_control.hardware.nidaq.nidaqmx.Task") as task_class:
+        zero_task = task_class.return_value.__enter__.return_value
+
+        with pytest.raises(RuntimeError, match="Stop failed"):
+            daq.stop_bleach_analog_output()
+
+        # The original waveform task must still be closed.
+        analog_task.close.assert_called_once_with()
+
+        # The analog output must still be explicitly set to 0 V.
+        zero_task.ao_channels.add_ao_voltage_chan.assert_called_once_with(
+            "Dev1/ao1",
+            min_val=0.0,
+            max_val=10.0,
+        )
+        zero_task.write.assert_called_once_with(0.0)
+
+        # The task reference must be cleared.
+        assert daq._bleach_ao_task is None
+
+
+def test_cannot_configure_analog_and_digital_bleach_outputs():
+    daq = NIDaq(NIDaqConfig(device="Dev1"))
+
+    daq._bleach_do_task = MagicMock()
+
+    analog_waveform = np.array(
+        [0.0, 2.5, 5.0, 2.5, 0.0]
+    )
+
+    with patch("msp_control.hardware.nidaq.nidaqmx.Task") as task_class:
+        with pytest.raises(
+            RuntimeError,
+            match="Bleach output is already configured",
+        ):
+            daq.configure_bleach_analog_output(
+                waveform=analog_waveform,
+                sample_rate_hz=1000.0,
+            )
+
+        # Configuration should be rejected before creating a task.
+        task_class.assert_not_called()
+
+    daq._bleach_do_task.stop.assert_not_called()
+    daq._bleach_do_task.close.assert_not_called()
+    assert daq._bleach_ao_task is None
+
+
+def test_cannot_configure_digital_bleach_when_analog_exists():
+    daq = NIDaq(NIDaqConfig(device="Dev1"))
+
+    # Simulate an existing analog output task.
+    daq._bleach_ao_task = MagicMock()
+
+    digital_waveform = np.array(
+        [False, True, True, False],
+        dtype=bool,
+    )
+
+    with patch("msp_control.hardware.nidaq.nidaqmx.Task") as task_class:
+        with pytest.raises(
+            RuntimeError,
+            match="Bleach output is already configured",
+        ):
+            daq.configure_bleach_digital_output(
+                waveform=digital_waveform,
+                sample_rate_hz=1000.0,
+            )
+
+        # Reject the operation before creating another task.
+        task_class.assert_not_called()
+
+    # The existing analog task must remain untouched.
+    daq._bleach_ao_task.stop.assert_not_called()
+    daq._bleach_ao_task.close.assert_not_called()
     assert daq._bleach_do_task is None

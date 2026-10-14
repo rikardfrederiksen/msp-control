@@ -1,11 +1,15 @@
 from pathlib import Path
 
+import numpy as np
+
 from msp_control.metadata import MetadataCollector
 from msp_control.clock import Clock
 from msp_control.acquisition import AcquisitionController
+from msp_control.bleach import BleachController
 from msp_control.config import ScanConfig
-from msp_control.data.model import Baseline, Experiment, Polarization, Scan, ScanGroup, Event
+from msp_control.data.model import Baseline, Experiment, Polarization, Scan, ScanGroup, Event, Bleach
 from msp_control.data.processing import process_baseline, process_scan
+from msp_control.calibration.waveform import BleachWaveformConfig
 from msp_control.storage.hdf5 import (
     create_experiment_file,
     write_baseline,
@@ -14,6 +18,8 @@ from msp_control.storage.hdf5 import (
     write_scan_group,
     update_scan_group,
     write_event,
+    write_bleach,
+    update_event,
 )
 
 class MSPController:
@@ -22,8 +28,10 @@ class MSPController:
         acquisition: AcquisitionController,
         clock: Clock | None = None,
         metadata_collector: MetadataCollector | None = None,
+        bleach_controller: BleachController | None = None,
     ):
         self.acquisition = acquisition
+        self.bleach_controller = bleach_controller
         self.clock = clock if clock is not None else Clock()
         self.metadata_collector = metadata_collector
 
@@ -130,6 +138,124 @@ class MSPController:
         self.experiment.add_scan(scan)
 
         return scan
+
+    def acquire_bleach(
+        self,
+        led_channel: int,
+        config: BleachWaveformConfig,
+        nd_filter: float = 0.0,
+        command_voltage: float | None = None,
+    ) -> Bleach:
+        """Acquire, persist, and register a bleaching exposure."""
+
+        if self.experiment is None or self.filename is None:
+            raise RuntimeError("No experiment is active")
+
+        if self.bleach_controller is None:
+            raise RuntimeError("No bleach controller configured")
+
+        if led_channel not in (1, 2):
+            raise ValueError("LED channel must be 1 or 2")
+
+        if nd_filter < 0:
+            raise ValueError("ND filter cannot be negative")
+
+        if led_channel == 1:
+            control_mode = "analog"
+
+            if command_voltage is None:
+                raise ValueError(
+                    "command_voltage is required for analog bleaching"
+                )
+
+            if not np.isfinite(command_voltage) or not 0.0 <= command_voltage <= 10.0:
+                raise ValueError(
+                    "command_voltage must be between 0 and 10 V"
+                )
+
+        elif led_channel == 2:
+            control_mode = "digital"
+
+            if command_voltage is not None:
+                raise ValueError(
+                    "command_voltage must be None for digital bleaching"
+                )
+
+        bleach_index = self.experiment.next_bleach_index
+
+        # Collect metadata before acquisition.
+        pending_metadata = (
+            self.metadata_collector.collect()
+            if self.metadata_collector is not None
+            else {}
+        )
+
+        # Persist the Event before activating the hardware.
+        event = self.add_event("Bleach")
+
+        try:
+            raw = self.bleach_controller.acquire(
+                led_channel=led_channel,
+                config=config,
+                command_voltage=command_voltage,
+            )
+
+        except Exception as exc:
+            description = f"Failed bleach: {exc}"
+
+            try:
+                update_event(
+                    self.filename,
+                    event_id=event.event_id,
+                    description=description,
+                )
+            except Exception as update_exc:
+                print(f"Event update failed: {update_exc!r}")
+            else:
+                # Only update memory after persistence succeeds.
+                event.description = description
+
+            raise
+
+        bleach = Bleach(
+            bleach_index=bleach_index,
+            event_id=event.event_id,
+            timestamp=event.timestamp,
+            led_channel=led_channel,
+            command_voltage=command_voltage,
+            requested_duration_s=config.duration_s,
+            nd_filter=nd_filter,
+            control_mode=control_mode,
+            monitor_time_s=raw.time_s,
+            monitor_voltage=raw.monitor_voltage,
+            completed=True,
+            metadata=pending_metadata,
+        )
+
+        # Persist before adding to the in-memory experiment.
+        try:
+            write_bleach(self.filename, bleach)
+
+        except Exception as exc:
+            description = f"Bleach completed; storage failed: {exc}"
+
+            try:
+                update_event(
+                    self.filename,
+                    event_id=event.event_id,
+                    description=description,
+                )
+            except Exception:
+                # Preserve the original storage exception.
+                pass
+            else:
+                event.description = description
+
+            raise
+
+        self.experiment.add_bleach(bleach)
+
+        return bleach
 
     def create_new_experiment_file(
         self,

@@ -3,18 +3,23 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from msp_control.metadata import MetadataCollector
 from msp_control.acquisition import RawAcquisition
 from msp_control.config import ScanConfig
 from msp_control.controller import MSPController
+from msp_control.calibration.waveform import BleachWaveformConfig
+from msp_control.bleach import RawBleachAcquisition
 from msp_control.data.model import Experiment, Polarization, ScanGroup
 from msp_control.storage.hdf5 import(
     read_baseline,
     read_scan,
     read_experiment_metadata,
-    read_scan_group)
+    read_scan_group,
+    read_event,
+    read_bleach,
+)
 
 
 class FakeAcquisitionController:
@@ -1787,3 +1792,286 @@ def test_failed_baseline_does_not_commit_metadata(tmp_path):
     with h5py.File(filename, "r") as h5:
         assert len(h5.get("baselines", {})) == 0
         assert len(h5.get("_pending", {})) == 0
+
+
+def test_acquire_bleach_creates_event_before_hardware(tmp_path):
+    acquisition = MagicMock()
+    bleach_controller = MagicMock()
+
+    controller = MSPController(
+        acquisition=acquisition,
+        bleach_controller=bleach_controller,
+    )
+
+    filename = tmp_path / "experiment.h5"
+    controller.create_new_experiment_file(filename)
+
+    config = BleachWaveformConfig(
+        duration_s=1.0,
+        sample_rate_hz=1000.0,
+    )
+
+    # Check that the Event is already persisted when hardware starts.
+    def acquire_bleach(*args, **kwargs):
+        event = read_event(filename, event_id=0)
+        assert event.description == "Bleach"
+
+        return RawBleachAcquisition(
+            time_s=np.array([0.0, 0.001]),
+            monitor_voltage=np.array([0.0, 2.5]),
+        )
+
+    bleach_controller.acquire.side_effect = acquire_bleach
+
+    bleach = controller.acquire_bleach(
+        led_channel=2,
+        config=config,
+        nd_filter=0.0,
+    )
+
+    assert bleach.event_id == 0
+    assert bleach.bleach_index == 0
+    assert bleach.control_mode == "digital"
+    assert bleach.completed is True
+
+    # Verify the Bleach was persisted.
+    stored = read_bleach(filename, bleach_index=0)
+    assert stored.event_id == 0
+
+    # Verify it was added to the active Experiment.
+    assert controller.experiment.get_bleach(0) is bleach
+
+
+def test_acquire_bleach_failure_updates_event(tmp_path):
+    acquisition = MagicMock()
+    bleach_controller = MagicMock()
+
+    controller = MSPController(
+        acquisition=acquisition,
+        bleach_controller=bleach_controller,
+    )
+
+    filename = tmp_path / "experiment.h5"
+    controller.create_new_experiment_file(filename)
+
+    config = BleachWaveformConfig(
+        duration_s=1.0,
+        sample_rate_hz=1000.0,
+    )
+
+    bleach_controller.acquire.side_effect = RuntimeError(
+        "Monitor acquisition failed"
+    )
+
+    with pytest.raises(RuntimeError, match="Monitor acquisition failed"):
+        controller.acquire_bleach(
+            led_channel=2,
+            config=config,
+            nd_filter=0.0,
+        )
+
+    # The original Event must still exist.
+    event = controller.experiment.get_event(0)
+
+    assert event.event_id == 0
+    assert event.description == (
+        "Failed bleach: Monitor acquisition failed"
+    )
+
+    # The persisted Event must match the in-memory Event.
+    stored_event = read_event(filename, event_id=0)
+
+    assert stored_event.event_id == event.event_id
+    assert stored_event.timestamp == event.timestamp
+    assert stored_event.description == event.description
+
+    # A failed acquisition must not create a Bleach object.
+    assert controller.experiment.bleaches == []
+
+
+def test_acquire_bleach_storage_failure_updates_event(tmp_path):
+    acquisition = MagicMock()
+    bleach_controller = MagicMock()
+
+    controller = MSPController(
+        acquisition=acquisition,
+        bleach_controller=bleach_controller,
+    )
+
+    filename = tmp_path / "experiment.h5"
+    controller.create_new_experiment_file(filename)
+
+    config = BleachWaveformConfig(
+        duration_s=1.0,
+        sample_rate_hz=1000.0,
+    )
+
+    # Simulate a successfully completed hardware exposure.
+    bleach_controller.acquire.return_value = RawBleachAcquisition(
+        time_s=np.array([0.0, 0.001]),
+        monitor_voltage=np.array([0.0, 2.5]),
+    )
+
+    # Simulate failure when persisting the Bleach.
+    with patch(
+        "msp_control.controller.write_bleach",
+        side_effect=OSError("Disk write failed"),
+    ):
+        with pytest.raises(OSError, match="Disk write failed"):
+            controller.acquire_bleach(
+                led_channel=2,
+                config=config,
+                nd_filter=0.0,
+            )
+
+    # Hardware acquisition was successful.
+    bleach_controller.acquire.assert_called_once()
+
+    # The Event records the completed exposure and storage failure.
+    event = controller.experiment.get_event(0)
+
+    assert event.description == (
+        "Bleach completed; storage failed: Disk write failed"
+    )
+
+    stored_event = read_event(filename, event_id=0)
+
+    assert stored_event.description == event.description
+    assert stored_event.timestamp == event.timestamp
+
+    # No Bleach object was registered because persistence failed.
+    assert controller.experiment.bleaches == []
+
+    # The experiment remains active for subsequent scans.
+    assert controller.experiment is not None
+    assert controller.filename == filename
+
+
+def test_acquire_analog_bleach_creates_event_and_stores_data(tmp_path):
+    acquisition = MagicMock()
+    bleach_controller = MagicMock()
+
+    controller = MSPController(
+        acquisition=acquisition,
+        bleach_controller=bleach_controller,
+    )
+
+    filename = tmp_path / "experiment.h5"
+    controller.create_new_experiment_file(filename)
+
+    config = BleachWaveformConfig(
+        duration_s=1.0,
+        sample_rate_hz=1000.0,
+    )
+
+    bleach_controller.acquire.return_value = RawBleachAcquisition(
+        time_s=np.array([0.0, 0.001]),
+        monitor_voltage=np.array([0.0, 2.5]),
+    )
+
+    bleach = controller.acquire_bleach(
+        led_channel=1,
+        config=config,
+        nd_filter=1.0,
+        command_voltage=5.0,
+    )
+
+    # Verify hardware acquisition arguments.
+    bleach_controller.acquire.assert_called_once_with(
+        led_channel=1,
+        config=config,
+        command_voltage=5.0,
+    )
+
+    # Verify the Bleach object.
+    assert bleach.bleach_index == 0
+    assert bleach.event_id == 0
+    assert bleach.led_channel == 1
+    assert bleach.control_mode == "analog"
+    assert bleach.command_voltage == 5.0
+    assert bleach.nd_filter == 1.0
+    assert bleach.completed is True
+
+    # Verify the associated Event.
+    event = controller.experiment.get_event(0)
+
+    assert event.description == "Bleach"
+    assert bleach.timestamp == event.timestamp
+
+    # Verify HDF5 persistence.
+    stored = read_bleach(filename, bleach_index=0)
+
+    assert stored.event_id == 0
+    assert stored.led_channel == 1
+    assert stored.control_mode == "analog"
+    assert stored.command_voltage == 5.0
+    assert stored.nd_filter == 1.0
+
+    np.testing.assert_array_equal(
+        stored.monitor_voltage,
+        bleach.monitor_voltage,
+    )
+
+    # Verify in-memory registration.
+    assert controller.experiment.get_bleach(0) is bleach
+
+
+def test_acquire_analog_bleach_requires_command_voltage(tmp_path):
+    bleach_controller = MagicMock()
+
+    controller = MSPController(
+        acquisition=MagicMock(),
+        bleach_controller=bleach_controller,
+    )
+
+    filename = tmp_path / "experiment.h5"
+    controller.create_new_experiment_file(filename)
+
+    config = BleachWaveformConfig(duration_s=1.0)
+
+    with pytest.raises(ValueError, match="command_voltage"):
+        controller.acquire_bleach(
+            led_channel=1,
+            config=config,
+            nd_filter=0.0,
+            command_voltage=None,
+        )
+
+    # No exposure was attempted.
+    bleach_controller.acquire.assert_not_called()
+
+    # Invalid requests must not create Events.
+    assert controller.experiment.events == []
+    assert controller.experiment.bleaches == []
+
+
+def test_acquire_digital_bleach_rejects_command_voltage(tmp_path):
+    bleach_controller = MagicMock()
+
+    controller = MSPController(
+        acquisition=MagicMock(),
+        bleach_controller=bleach_controller,
+    )
+
+    filename = tmp_path / "experiment.h5"
+    controller.create_new_experiment_file(filename)
+
+    config = BleachWaveformConfig(duration_s=1.0)
+
+    with pytest.raises(
+        ValueError,
+        match="command_voltage must be None",
+    ):
+        controller.acquire_bleach(
+            led_channel=2,
+            config=config,
+            nd_filter=0.0,
+            command_voltage=5.0,
+        )
+
+    # No hardware acquisition should occur.
+    bleach_controller.acquire.assert_not_called()
+
+    # No Event or Bleach should be created.
+    assert controller.experiment.events == []
+    assert controller.experiment.bleaches == []
