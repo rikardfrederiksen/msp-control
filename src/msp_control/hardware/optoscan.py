@@ -27,6 +27,13 @@ class OptoscanSerial:
 
         try:
             self.open()
+
+            # Return to the main menu if already in diagnostic mode.
+            try:
+                self.exit_diagnostic_mode()
+            except TimeoutError:
+                pass
+
             self.enter_diagnostic_mode()
 
         except Exception:
