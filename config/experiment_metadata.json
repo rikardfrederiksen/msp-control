@@ -1,0 +1,48 @@
+{
+  "species": {
+    "mouse": {
+      "label": "Mouse (Mus musculus)",
+      "genotypes": {
+        "WT": "Wild type",
+        "Arr1_KO": "Arr1−/−",
+        "Arr1_HET": "Arr1+/−",
+        "Ano2_KO": "Ano2−/−",
+        "Cx36_KO": "Cx36−/−",
+        "Ano2_Cx36_DKO": "Ano2−/−;Cx36−/−"
+      }
+    },
+    "zebrafish": {
+      "label": "Zebrafish (Danio rerio)",
+      "genotypes": {
+        "WT": "Wild type",
+        "zcrdh_KO": "zcrdh−/−"
+      }
+    },
+    "alligator": {
+      "label": "American alligator (Alligator mississippiensis)",
+      "genotypes": {
+        "WT": "Wild type"
+      }
+    },
+    "marmoset": {
+      "label": "Common marmoset (Callithrix jacchus)",
+      "genotypes": {
+        "WT": "Wild type"
+      }
+    }
+  },
+  "preparations": {
+    "isolated_retina": "Isolated retina",
+    "retina_rpe": "Retina–RPE attached",
+    "retinal_slice": "Retinal slice",
+    "dissociated": "Dissociated photoreceptors"
+  },
+  "sex": {
+    "female": "Female",
+    "male": "Male",
+    "unknown": "Unknown"
+  },
+  "experimenters": {
+    "RF": "Rikard Frederiksen"
+  }
+}

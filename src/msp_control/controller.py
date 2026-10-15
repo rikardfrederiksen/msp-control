@@ -20,12 +20,13 @@ from msp_control.storage.hdf5 import (
     write_event,
     write_bleach,
     update_event,
+    read_experiment,
 )
 
 class MSPController:
     def __init__(
         self,
-        acquisition: AcquisitionController,
+        acquisition: AcquisitionController | None = None,
         clock: Clock | None = None,
         metadata_collector: MetadataCollector | None = None,
         bleach_controller: BleachController | None = None,
@@ -456,3 +457,22 @@ class MSPController:
         self.experiment.add_event(event)
 
         return event
+
+    def open_experiment_file(
+        self,
+        filename: str | Path,
+    ) -> None:
+        """Load and activate an existing MSP experiment."""
+
+        if self.experiment is not None:
+            raise RuntimeError(
+                "An experiment is already active"
+            )
+
+        filename = Path(filename)
+
+        # Load and validate before changing controller state.
+        experiment = read_experiment(filename)
+
+        self.experiment = experiment
+        self.filename = filename

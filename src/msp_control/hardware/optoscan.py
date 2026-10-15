@@ -20,6 +20,19 @@ class OptoscanSerial:
         self.timeout = timeout
         self._serial = None
 
+    def initialize(self) -> None:
+        """Open or reinitialize the Optoscan serial connection."""
+
+        self.close()
+
+        try:
+            self.open()
+            self.enter_diagnostic_mode()
+
+        except Exception:
+            self.close()
+            raise
+
     def open(self) -> None:
         """Open the serial connection."""
         self._serial = serial.Serial(

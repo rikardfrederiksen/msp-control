@@ -348,7 +348,10 @@ def read_experiment_metadata(
 
     with h5py.File(filename, "r") as h5:
         _validate_file(h5)
-        
+
+        if "metadata" not in h5:
+            return {}
+
         metadata_group = h5["metadata"]
         return _read_metadata(metadata_group)
 
@@ -894,6 +897,18 @@ def _initialize_file(h5: h5py.File) -> None:
     h5.attrs["format"] = FORMAT_NAME
     h5.attrs["format_version"] = FORMAT_VERSION
     h5.attrs["software_version"] = SOFTWARE_VERSION
+
+    # Initialize the standard experiment structure.
+    for group_name in (
+        "metadata",
+        "baselines",
+        "scans",
+        "scan_groups",
+        "events",
+        "bleaches",
+        "_pending",
+    ):
+        h5.create_group(group_name)
 
 
 def _validate_file(h5: h5py.File) -> None:

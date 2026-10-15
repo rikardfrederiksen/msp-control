@@ -434,6 +434,7 @@ def test_write_scan_rejects_duplicate_index(tmp_path, baseline, scan):
         scan.raw_specimen,
     )
 
+
 def test_experiment_metadata_round_trip(tmp_path):
     filename = tmp_path / "test.h5"
 
@@ -448,6 +449,22 @@ def test_experiment_metadata_round_trip(tmp_path):
     loaded = read_experiment_metadata(filename)
 
     assert loaded == metadata
+
+
+def test_read_experiment_without_metadata(tmp_path, baseline, scan):
+    """A completed experiment can be read without shared metadata."""
+
+    filename = tmp_path / "no_metadata.h5"
+    create_experiment_file(filename)
+
+    write_baseline(filename, baseline)
+    write_scan(filename, scan)
+
+    experiment = read_experiment(filename)
+
+    assert experiment.shared_metadata == {}
+    assert len(experiment.baselines) == 1
+    assert len(experiment.scans) == 1
 
 
 def test_write_scan_group(tmp_path, baseline, scan):
@@ -1175,3 +1192,20 @@ def test_update_nonexistent_event(tmp_path):
 
     with h5py.File(filename, "r") as h5:
         assert "events/event_000" not in h5
+
+
+def test_empty_experiment_roundtrip(tmp_path):
+    """A new experiment must be readable before acquisition."""
+
+    filename = tmp_path / "empty_experiment.h5"
+
+    create_experiment_file(filename)
+
+    experiment = read_experiment(filename)
+
+    assert experiment.shared_metadata == {}
+    assert len(experiment.baselines) == 0
+    assert len(experiment.scans) == 0
+    assert len(experiment.scan_groups) == 0
+    assert len(experiment.events) == 0
+    assert len(experiment.bleaches) == 0
