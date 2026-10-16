@@ -20,18 +20,27 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 import pyqtgraph as pg
 
+from msp_control.hardware.manager import HardwareManager
+from msp_control.hardware.optoscan import OptoscanSerial
 from msp_control.controller import MSPController
 from msp_control.metadata_registry import load_metadata_registry
 from msp_control.gui.experiment_metadata_dialog import (
     ExperimentMetadataDialog,
+)
+from msp_control.hardware.field_stop import (
+    FieldStopConfig,
+    FieldStopMonitor,
+    KinesisFieldStopDevice,
 )
 
 
 class MSPMainWindow(QMainWindow):
     """Main window for the MSP control application."""
 
-    def __init__(self):
+    def __init__(self, hardware_manager=None):
         super().__init__()
+
+        self.hardware_manager = hardware_manager
 
         self.setWindowTitle("MSP Control")
         self.resize(1400, 800)
@@ -78,6 +87,16 @@ class MSPMainWindow(QMainWindow):
             self.on_edit_experiment_metadata
         )
 
+        # Hardware menu
+        hardware_menu = self.menuBar().addMenu("&Hardware")
+
+        initialize_hardware_action = hardware_menu.addAction(
+            "&Initialize Hardware"
+        )
+        initialize_hardware_action.triggered.connect(
+            self.on_initialize_hardware
+        )
+        
         # --------------------------------------------------
         # Main OD spectrum plot
         # --------------------------------------------------
@@ -608,11 +627,50 @@ class MSPMainWindow(QMainWindow):
                 f"Could not open the experiment:\n\n{exc}",
             )
 
+    def on_initialize_hardware(self):
+        """Initialize the persistent hardware connections."""
+
+        try:
+            if self.hardware_manager is None:
+                self.hardware_manager = create_hardware_manager()
+
+            self.hardware_manager.initialize()
+
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Hardware Initialization Failed",
+                str(exc),
+            )
+            return
+
+        QMessageBox.information(
+            self,
+            "Hardware Initialization",
+            "Hardware initialization completed successfully.",
+        )
+
+def create_hardware_manager() -> HardwareManager:
+    """Construct and return the hardware manager."""
+
+    optoscan = OptoscanSerial("COM2")
+
+    field_stop_config = FieldStopConfig()
+    field_stop_device = KinesisFieldStopDevice.from_kinesis(
+        field_stop_config
+    )
+    field_stop = FieldStopMonitor(
+        field_stop_device,
+        field_stop_config,
+    )
+
+    return HardwareManager(optoscan, field_stop)
+
+
 def main():
     app = QApplication(sys.argv)
 
     window = MSPMainWindow()
-    #window.load_experiment("data/msp_hardware_test_002.h5")
     window.show()
 
     return app.exec()

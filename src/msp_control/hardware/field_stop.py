@@ -30,6 +30,11 @@ class KinesisFieldStopDevice:
         self.settings_option = settings_option
         self.device = None
 
+    @property
+    def is_connected(self) -> bool:
+        """Whether the Kinesis device has been connected."""
+        return self.device is not None
+        
     def connect(self):
         if self.settings_option is None:
             raise RuntimeError(
@@ -95,7 +100,11 @@ class FieldStopMonitor:
     def __init__(self, device, config: FieldStopConfig):
         self.device = device
         self.config = config
-        
+
+    @property
+    def is_connected(self) -> bool:
+        return self.device.is_connected
+
     def connect(self):
         self.device.connect()
 
