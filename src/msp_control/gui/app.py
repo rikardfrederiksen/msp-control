@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from datetime import datetime
 
 from PySide6.QtWidgets import (
     QApplication,
@@ -15,11 +16,35 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
     QMessageBox,
     QFileDialog,
+    QGroupBox,
+    QPlainTextEdit,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
+    QAbstractItemView,
+    QLineEdit,
+    QPushButton,
+    QHBoxLayout,
+    QScrollArea,
+    QFormLayout,
+    QDoubleSpinBox,
+    QSpinBox,
+    QRadioButton,
 )
 
-from PySide6.QtCore import Qt
+
+
+from PySide6.QtCore import Qt, QTimer, QObject, QThread, Signal, Slot
 import pyqtgraph as pg
 
+from msp_control.data.model import Polarization
+from msp_control.protocol import AcquisitionProtocol
+from msp_control.config import ScanConfig
+from msp_control.acquisition import AcquisitionController
+from msp_control.hardware.nidaq import NIDaq, NIDaqConfig
+from msp_control.metadata import MetadataCollector
+from msp_control.hardware.stage import StagePositionMonitor, StageConfig
+from msp_control.hardware.temperature import TemperatureMonitor, TemperatureConfig
 from msp_control.hardware.manager import HardwareManager
 from msp_control.hardware.optoscan import OptoscanSerial
 from msp_control.controller import MSPController
@@ -34,6 +59,58 @@ from msp_control.hardware.field_stop import (
 )
 
 
+class BaselineAcquisitionWorker(QObject):
+    """Run baseline acquisition outside the GUI thread."""
+
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, controller, config, polarization):
+        super().__init__()
+        self.controller = controller
+        self.config = config
+        self.polarization = polarization
+
+    @Slot()
+    def run(self):
+        try:
+            baseline = self.controller.acquire_baseline(
+                config=self.config,
+                polarization=self.polarization,
+            )
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        else:
+            self.finished.emit(baseline)
+
+
+class ScanAcquisitionWorker(QObject):
+    """Run specimen acquisition outside the GUI thread."""
+
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, controller, config, polarization, baseline_index):
+        super().__init__()
+        self.controller = controller
+        self.config = config
+        self.polarization = polarization
+        self.baseline_index = baseline_index
+
+    @Slot()
+    def run(self):
+        try:
+            scan = self.controller.acquire_scan(
+                config=self.config,
+                polarization=self.polarization,
+                baseline_index=self.baseline_index,
+            )
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        else:
+            self.finished.emit(scan)
+
+
 class MSPMainWindow(QMainWindow):
     """Main window for the MSP control application."""
 
@@ -41,6 +118,10 @@ class MSPMainWindow(QMainWindow):
         super().__init__()
 
         self.hardware_manager = hardware_manager
+        self.hardware_initialized = False
+
+        self.acquisition_thread = None
+        self.acquisition_worker = None
 
         self.setWindowTitle("MSP Control")
         self.resize(1400, 800)
@@ -75,6 +156,22 @@ class MSPMainWindow(QMainWindow):
         )
         close_experiment_action.triggered.connect(
             self.on_close_experiment
+        )
+
+        file_menu.addSeparator()
+
+        load_protocol_action = file_menu.addAction(
+            "&Load Protocol..."
+        )
+        load_protocol_action.triggered.connect(
+            self.on_load_protocol
+        )
+
+        save_protocol_action = file_menu.addAction(
+            "&Save Protocol As..."
+        )
+        save_protocol_action.triggered.connect(
+            self.on_save_protocol
         )
 
         # Edit menu
@@ -220,12 +317,138 @@ class MSPMainWindow(QMainWindow):
         # Column 4: MSP and bleaching controls
         # --------------------------------------------------
 
-        hardware_panel = QWidget()
-        hardware_layout = QVBoxLayout(hardware_panel)
+        # Scrollable MSP control panel
+        hardware_panel = QScrollArea()
+        hardware_panel.setWidgetResizable(True)
+        hardware_panel.setFrameShape(QScrollArea.Shape.NoFrame)
 
-        hardware_layout.addWidget(QLabel("MSP controls"))
-        hardware_layout.addWidget(QLabel("Bleaching controls"))
-        hardware_layout.addStretch()
+        self.hardware_controls = QWidget()
+        self.hardware_layout = QVBoxLayout(self.hardware_controls)
+
+        # --------------------------------------------------
+        # Scan configuration
+        # --------------------------------------------------
+
+        scan_config_group = QGroupBox("Scan Configuration")
+        scan_config_layout = QFormLayout(scan_config_group)
+
+        self.start_nm_spin = QDoubleSpinBox()
+        self.start_nm_spin.setRange(300, 1000)
+        self.start_nm_spin.setValue(360)
+        self.start_nm_spin.setSuffix(" nm")
+
+        self.end_nm_spin = QDoubleSpinBox()
+        self.end_nm_spin.setRange(300, 1000)
+        self.end_nm_spin.setValue(720)
+        self.end_nm_spin.setSuffix(" nm")
+
+        self.step_nm_spin = QDoubleSpinBox()
+        self.step_nm_spin.setRange(0.1, 100)
+        self.step_nm_spin.setValue(2)
+        self.step_nm_spin.setSuffix(" nm")
+
+        self.step_time_spin = QDoubleSpinBox()
+        self.step_time_spin.setRange(1, 1000)
+        self.step_time_spin.setValue(20)
+        self.step_time_spin.setSuffix(" ms")
+
+        self.input_slit_spin = QDoubleSpinBox()
+        self.input_slit_spin.setRange(0.1, 20)
+        self.input_slit_spin.setValue(4)
+        self.input_slit_spin.setSuffix(" nm")
+
+        self.output_slit_spin = QDoubleSpinBox()
+        self.output_slit_spin.setRange(0.1, 20)
+        self.output_slit_spin.setValue(4)
+        self.output_slit_spin.setSuffix(" nm")
+
+        self.dark_scans_spin = QSpinBox()
+        self.dark_scans_spin.setRange(0, 100)
+        self.dark_scans_spin.setValue(2)
+
+        self.baseline_scans_spin = QSpinBox()
+        self.baseline_scans_spin.setRange(1, 100)
+        self.baseline_scans_spin.setValue(20)
+
+        self.specimen_scans_spin = QSpinBox()
+        self.specimen_scans_spin.setRange(1, 100)
+        self.specimen_scans_spin.setValue(3)
+
+        scan_config_layout.addRow("Start wavelength:", self.start_nm_spin)
+        scan_config_layout.addRow("End wavelength:", self.end_nm_spin)
+        scan_config_layout.addRow("Step size:", self.step_nm_spin)
+        scan_config_layout.addRow("Step time:", self.step_time_spin)
+        scan_config_layout.addRow("Input slit:", self.input_slit_spin)
+        scan_config_layout.addRow("Output slit:", self.output_slit_spin)
+        scan_config_layout.addRow("Dark scans:", self.dark_scans_spin)
+        scan_config_layout.addRow("Baseline scans:", self.baseline_scans_spin)
+        scan_config_layout.addRow("Specimen scans:", self.specimen_scans_spin)
+
+        self.hardware_layout.addWidget(scan_config_group)
+
+        for widget in (
+                self.start_nm_spin,
+                self.end_nm_spin,
+                self.step_nm_spin,
+                self.step_time_spin,
+                self.input_slit_spin,
+                self.output_slit_spin,
+        ):
+            widget.valueChanged.connect(
+                self.update_acquisition_controls
+            )
+
+        # --------------------------------------------------
+        # Acquisition controls
+        # --------------------------------------------------
+
+        acquisition_group = QGroupBox("Acquisition")
+        acquisition_layout = QVBoxLayout(acquisition_group)
+
+        # Polarization selection
+        polarization_layout = QHBoxLayout()
+
+        self.transverse_radio = QRadioButton("Transverse (T)")
+        self.longitudinal_radio = QRadioButton("Longitudinal (L)")
+
+        self.transverse_radio.setChecked(True)
+
+        polarization_layout.addWidget(self.transverse_radio)
+        polarization_layout.addWidget(self.longitudinal_radio)
+
+        acquisition_layout.addLayout(polarization_layout)
+
+        self.transverse_radio.toggled.connect(
+            self.update_acquisition_controls
+        )
+
+        # Acquisition buttons
+        self.acquire_baseline_button = QPushButton("Acquire Baseline")
+        self.acquire_scan_button = QPushButton("Acquire Scan")
+
+        # Disabled until acquisition is connected
+        self.acquire_baseline_button.setEnabled(False)
+        self.acquire_scan_button.setEnabled(False)
+
+        acquisition_layout.addWidget(self.acquire_baseline_button)
+        acquisition_layout.addWidget(self.acquire_scan_button)
+
+        self.hardware_layout.addWidget(acquisition_group)
+
+        # Action of acquistion buttons
+        self.acquire_baseline_button.clicked.connect(
+            self.on_acquire_baseline
+        )
+
+        self.acquire_scan_button.clicked.connect(
+            self.on_acquire_scan
+        )
+
+        # Placeholder for bleaching controls
+        self.hardware_layout.addWidget(QLabel("Bleaching controls"))
+        self.hardware_layout.addStretch()
+
+        hardware_panel.setWidget(self.hardware_controls)
 
         # --------------------------------------------------
         # Main horizontal splitter
@@ -243,9 +466,131 @@ class MSPMainWindow(QMainWindow):
         self.splitter.setStretchFactor(2, 1)
         self.splitter.setStretchFactor(3, 0)
 
-        self.splitter.setSizes([280, 190, 700, 230])
+        self.splitter.setSizes([280, 190, 700, 300])
 
-        self.setCentralWidget(self.splitter)
+        # Lower panel: messages, events, and clocks
+        self.lower_splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        messages_panel = QGroupBox("Messages / Log")
+        self.message_log = QPlainTextEdit()
+        self.message_log.setReadOnly(True)
+        self.message_log.setMaximumBlockCount(1000
+                                              )
+        events_panel = QGroupBox("Experiment Events")
+        clocks_panel = QGroupBox("Clocks")
+
+        # Messages panel
+        messages_layout = QVBoxLayout(messages_panel)
+        messages_layout.addWidget(self.message_log)
+
+        # Experiment events panel
+        events_layout = QVBoxLayout(events_panel)
+
+        self.events_table = QTableWidget(0, 2)
+        self.events_table.setHorizontalHeaderLabels(["Time", "Event"])
+
+        self.events_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.events_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.events_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+
+        self.events_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.events_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch
+        )
+
+        events_layout.addWidget(self.events_table)
+
+        # Manual event entry
+        event_entry_layout = QHBoxLayout()
+
+        self.event_description = QLineEdit()
+        self.event_description.setPlaceholderText("Event description")
+
+        self.record_event_button = QPushButton("Record Event")
+
+        event_entry_layout.addWidget(self.event_description)
+        event_entry_layout.addWidget(self.record_event_button)
+
+        events_layout.addLayout(event_entry_layout)
+
+        self.record_event_button.clicked.connect(self.on_record_event)
+        self.event_description.returnPressed.connect(self.on_record_event)
+
+        self.events_table.itemSelectionChanged.connect(
+            self.update_elapsed_time
+        )
+
+        # Clocks panel
+        clocks_layout = QVBoxLayout(clocks_panel)
+
+        clocks_layout.addWidget(QLabel("Current time"))
+
+        self.current_time_label = QLabel("--:--:--")
+        self.current_time_label.setStyleSheet(
+            "font-size: 24px; font-weight: bold;"
+        )
+        clocks_layout.addWidget(self.current_time_label)
+
+        self.selected_event_label = QLabel("Time since: No event selected")
+        self.selected_event_label.setWordWrap(True)
+        clocks_layout.addWidget(self.selected_event_label)
+
+        self.elapsed_event_label = QLabel("--:--:--")
+        self.elapsed_event_label.setStyleSheet(
+            "font-size: 24px; font-weight: bold;"
+        )
+        clocks_layout.addWidget(self.elapsed_event_label)
+
+        clocks_layout.addStretch()
+
+        for panel in (messages_panel, events_panel, clocks_panel):
+            self.lower_splitter.addWidget(panel)
+
+        self.lower_splitter.setSizes([350, 350, 300])
+
+        self.update_event_controls()
+        self.update_acquisition_controls()
+        
+        # Main window: upper workspace and lower information panel
+        self.main_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.main_splitter.addWidget(self.splitter)
+        self.main_splitter.addWidget(self.lower_splitter)
+
+        self.main_splitter.setStretchFactor(0, 3)
+        self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setSizes([750, 250])
+
+        self.clock_timer = QTimer(self)
+        self.clock_timer.timeout.connect(self.update_clocks)
+        self.clock_timer.start(1000)
+
+        self.update_clocks()
+
+        self.setCentralWidget(self.main_splitter)
+
+        self.log_message("MSP Control started")
+
+    def closeEvent(self, event):
+        """Prevent closing the application during acquisition."""
+
+        if self.acquisition_thread is not None:
+            QMessageBox.warning(
+                self,
+                "Acquisition in Progress",
+                "Wait for the current acquisition to finish before exiting.",
+            )
+            event.ignore()
+            return
+
+        super().closeEvent(event)
 
     def load_experiment(self, filename: str | Path):
         """Load an experiment and display its OD spectra."""
@@ -304,6 +649,8 @@ class MSPMainWindow(QMainWindow):
                 pen=pg.mkPen(color=color, width=1.5),
             )
 
+            curve.setVisible(False)
+
             self.scan_curves[scan.scan_index] = curve
 
             item = QListWidgetItem(
@@ -314,11 +661,15 @@ class MSPMainWindow(QMainWindow):
             item.setFlags(
                 item.flags() | Qt.ItemFlag.ItemIsUserCheckable
             )
-            item.setCheckState(Qt.CheckState.Checked)
+            item.setCheckState(Qt.CheckState.Unchecked)
 
             self.scan_list.addItem(item)
 
         self.setWindowTitle(f"MSP Control - {Path(filename).name}")
+
+        self.refresh_events_table()
+        self.update_event_controls()
+        self.update_acquisition_controls()
 
     def update_experiment_metadata_display(self, metadata):
         """Display experiment metadata using readable labels."""
@@ -371,20 +722,434 @@ class MSPMainWindow(QMainWindow):
             "\n".join(lines) if lines else "No experiment metadata"
         )
 
+    def log_message(self, message: str) -> None:
+        """Append a timestamped message to the instrument log."""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.message_log.appendPlainText(f"[{timestamp}] {message}")
+
+    def refresh_events_table(self) -> None:
+        """Display events from the active experiment."""
+
+        self.events_table.setRowCount(0)
+
+        experiment = self.controller.experiment
+        if experiment is None:
+            return
+
+        events = sorted(
+            experiment.events,
+            key=lambda event: event.timestamp,
+        )
+
+        for event in events:
+            row = self.events_table.rowCount()
+            self.events_table.insertRow(row)
+
+            time_item = QTableWidgetItem(
+                event.timestamp.strftime("%H:%M:%S")
+            )
+            description_item = QTableWidgetItem(event.description)
+
+            # Retain the event ID without displaying it.
+            time_item.setData(
+                Qt.ItemDataRole.UserRole,
+                event.event_id,
+            )
+
+            self.events_table.setItem(row, 0, time_item)
+            self.events_table.setItem(row, 1, description_item)
+
+        # Select the most recent event by default.
+        if events:
+            self.events_table.selectRow(len(events) - 1)
+
+    def update_event_controls(self) -> None:
+        """Enable event recording only when an experiment is active."""
+        self.record_event_button.setEnabled(
+            self.controller.experiment is not None
+        )
+
+    def update_acquisition_controls(self) -> None:
+        """Enable acquisition buttons when their requirements are met."""
+
+        ready = (
+            self.controller.experiment is not None
+            and self.hardware_initialized
+            and self.acquisition_thread is None
+        )
+
+        self.acquire_baseline_button.setEnabled(ready)
+
+        scan_ready = False
+
+        if ready and self.active_baseline_index is not None:
+            baseline = self.controller.experiment.get_baseline(
+                self.active_baseline_index
+            )
+
+            try:
+                config = self.get_scan_config()
+
+                scan_ready = bool(
+                    baseline.polarization is self.get_polarization()
+                    and baseline.config.is_compatible_with(config)
+                )
+
+            except ValueError:
+                pass
+
+        self.acquire_scan_button.setEnabled(scan_ready)
+
+    def update_clocks(self) -> None:
+        """Update the live clock and elapsed event time."""
+
+        now = datetime.now()
+        self.current_time_label.setText(now.strftime("%H:%M:%S"))
+
+        self.update_elapsed_time()
+
+    def update_elapsed_time(self) -> None:
+        """Display elapsed time since the selected experiment event."""
+
+        experiment = self.controller.experiment
+        row = self.events_table.currentRow()
+
+        if experiment is None or row < 0:
+            self.elapsed_event_label.setText("--:--:--")
+            self.selected_event_label.setText("Time since: No event selected")
+            return
+
+        item = self.events_table.item(row, 0)
+
+        if item is None:
+            self.elapsed_event_label.setText("--:--:--")
+            self.selected_event_label.setText("Time since: No event selected")
+            return
+
+        event_id = item.data(Qt.ItemDataRole.UserRole)
+        event = experiment.get_event(event_id)
+
+        self.selected_event_label.setText(
+            f"Time since: {event.description}"
+        )
+
+        elapsed = datetime.now().astimezone() - event.timestamp
+        total_seconds = max(0, int(elapsed.total_seconds()))
+
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+
+        self.elapsed_event_label.setText(
+            f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        )
+
+    def get_scan_config(self, *, baseline: bool = False) -> ScanConfig:
+        """Build a scan configuration from the GUI controls."""
+
+        data_scans = (
+            self.baseline_scans_spin.value()
+            if baseline
+            else self.specimen_scans_spin.value()
+        )
+
+        return ScanConfig(
+            start_nm=self.start_nm_spin.value(),
+            end_nm=self.end_nm_spin.value(),
+            step_nm=self.step_nm_spin.value(),
+            step_time_ms=self.step_time_spin.value(),
+            input_slit_nm=self.input_slit_spin.value(),
+            output_slit_nm=self.output_slit_spin.value(),
+            dark_scans=self.dark_scans_spin.value(),
+            data_scans=data_scans,
+        )
+
+    def get_acquisition_protocol(self) -> AcquisitionProtocol:
+        """Construct an acquisition protocol from the GUI settings."""
+
+        return AcquisitionProtocol(
+            start_nm=self.start_nm_spin.value(),
+            end_nm=self.end_nm_spin.value(),
+            step_nm=self.step_nm_spin.value(),
+            step_time_ms=self.step_time_spin.value(),
+            input_slit_nm=self.input_slit_spin.value(),
+            output_slit_nm=self.output_slit_spin.value(),
+            dark_scans=self.dark_scans_spin.value(),
+            baseline_scans=self.baseline_scans_spin.value(),
+            specimen_scans=self.specimen_scans_spin.value(),
+        )
+
+    def set_acquisition_protocol(self, protocol: AcquisitionProtocol) -> None:
+        """Populate the GUI controls from an acquisition protocol."""
+
+        self.start_nm_spin.setValue(protocol.start_nm)
+        self.end_nm_spin.setValue(protocol.end_nm)
+        self.step_nm_spin.setValue(protocol.step_nm)
+        self.step_time_spin.setValue(protocol.step_time_ms)
+        self.input_slit_spin.setValue(protocol.input_slit_nm)
+        self.output_slit_spin.setValue(protocol.output_slit_nm)
+        self.dark_scans_spin.setValue(protocol.dark_scans)
+        self.baseline_scans_spin.setValue(protocol.baseline_scans)
+        self.specimen_scans_spin.setValue(protocol.specimen_scans)
+
+        self.update_acquisition_controls()
+
+    def get_polarization(self) -> Polarization:
+        """Return the polarization selected in the GUI."""
+
+        if self.transverse_radio.isChecked():
+            return Polarization.TRANSVERSE
+
+        return Polarization.LONGITUDINAL
+
+    def on_acquire_baseline(self) -> None:
+        """Start baseline acquisition in a worker thread."""
+
+        if self.controller.experiment is None or not self.hardware_initialized:
+            return
+
+        if self.acquisition_thread is not None:
+            return
+
+        try:
+            config = self.get_scan_config(baseline=True)
+            polarization = self.get_polarization()
+        except ValueError as exc:
+            QMessageBox.warning(
+                self,
+                "Invalid Scan Configuration",
+                str(exc),
+            )
+            return
+
+        self.log_message(
+            f"Acquiring {polarization.value} baseline "
+            f"({config.data_scans} scans)"
+        )
+
+        self.acquisition_thread = QThread(self)
+        self.acquisition_worker = BaselineAcquisitionWorker(
+            self.controller,
+            config,
+            polarization,
+        )
+
+        self.acquisition_worker.moveToThread(self.acquisition_thread)
+
+        self.acquisition_thread.started.connect(self.acquisition_worker.run)
+
+        self.acquisition_worker.finished.connect(self.on_baseline_acquired)
+        self.acquisition_worker.failed.connect(self.on_baseline_failed)
+
+        self.acquisition_worker.finished.connect(self.acquisition_thread.quit)
+        self.acquisition_worker.failed.connect(self.acquisition_thread.quit)
+
+        self.acquisition_thread.finished.connect(
+            self.acquisition_worker.deleteLater
+        )
+        self.acquisition_thread.finished.connect(
+            self.acquisition_thread.deleteLater
+        )
+        self.acquisition_thread.finished.connect(
+            self.on_acquisition_thread_finished
+        )
+
+        self.update_acquisition_controls()
+        self.acquisition_thread.start()
+
+    def on_baseline_acquired(self, baseline) -> None:
+        """Display a successfully acquired baseline."""
+
+        self.log_message(
+            f"Baseline {baseline.baseline_index} acquired successfully"
+        )
+
+        item = QListWidgetItem(
+            f"Baseline {baseline.baseline_index:03d} "
+            f"({baseline.polarization.value})"
+        )
+
+        item.setData(
+            Qt.ItemDataRole.UserRole,
+            baseline.baseline_index,
+        )
+
+        self.baseline_list.addItem(item)
+        self.baseline_list.setCurrentItem(item)
+
+
+    def on_baseline_failed(self, message: str) -> None:
+        """Report an acquisition error."""
+
+        self.log_message(f"Baseline acquisition failed: {message}")
+
+        QMessageBox.critical(
+            self,
+            "Baseline Acquisition Failed",
+            message,
+        )
+
+    def on_acquisition_thread_finished(self) -> None:
+        """Clean up after an acquisition."""
+
+        self.acquisition_thread = None
+        self.acquisition_worker = None
+        self.update_acquisition_controls()
+
+    def on_acquire_scan(self) -> None:
+        """Start specimen acquisition in a worker thread."""
+
+        # Recheck the acquisition conditions.
+        self.update_acquisition_controls()
+
+        if not self.acquire_scan_button.isEnabled():
+            return
+
+        try:
+            config = self.get_scan_config()
+            polarization = self.get_polarization()
+            baseline_index = self.active_baseline_index
+
+        except ValueError as exc:
+            QMessageBox.warning(
+                self,
+                "Invalid Scan Configuration",
+                str(exc),
+            )
+            return
+
+        self.log_message(
+            f"Acquiring {polarization.value} specimen scan "
+            f"using baseline {baseline_index:03d}"
+        )
+
+        self.acquisition_thread = QThread(self)
+
+        self.acquisition_worker = ScanAcquisitionWorker(
+            self.controller,
+            config,
+            polarization,
+            baseline_index,
+        )
+
+        self.acquisition_worker.moveToThread(self.acquisition_thread)
+
+        self.acquisition_thread.started.connect(
+            self.acquisition_worker.run
+        )
+
+        self.acquisition_worker.finished.connect(
+            self.on_scan_acquired
+        )
+        self.acquisition_worker.failed.connect(
+            self.on_scan_failed
+        )
+
+        self.acquisition_worker.finished.connect(
+            self.acquisition_thread.quit
+        )
+        self.acquisition_worker.failed.connect(
+            self.acquisition_thread.quit
+        )
+
+        self.acquisition_thread.finished.connect(
+            self.acquisition_worker.deleteLater
+        )
+        self.acquisition_thread.finished.connect(
+            self.acquisition_thread.deleteLater
+        )
+        self.acquisition_thread.finished.connect(
+            self.on_acquisition_thread_finished
+        )
+
+        self.update_acquisition_controls()
+        self.acquisition_thread.start()
+
+    def on_scan_acquired(self, scan) -> None:
+        """Display a successfully acquired specimen scan."""
+
+        self.log_message(
+            f"Scan {scan.scan_index} acquired successfully"
+        )
+
+        colors = [
+            "#0072B2",
+            "#D55E00",
+            "#009E73",
+            "#CC79A7",
+            "#E69F00",
+            "#56B4E9",
+        ]
+
+        color = colors[scan.scan_index % len(colors)]
+
+        curve = self.spectrum_plot.plot(
+            scan.wavelength,
+            scan.optical_density,
+            pen=pg.mkPen(color=color, width=1.5),
+        )
+
+        self.scan_curves[scan.scan_index] = curve
+
+        item = QListWidgetItem(
+            f"Scan {scan.scan_index:03d} ({scan.polarization.value})"
+        )
+
+        item.setData(
+            Qt.ItemDataRole.UserRole,
+            scan.scan_index,
+        )
+
+        item.setFlags(
+            item.flags() | Qt.ItemFlag.ItemIsUserCheckable
+        )
+        # Hide and uncheck all previously displayed scans.
+        for i in range(self.scan_list.count()):
+            existing_item = self.scan_list.item(i)
+            existing_item.setCheckState(Qt.CheckState.Unchecked)
+        item.setCheckState(Qt.CheckState.Checked)
+
+        self.scan_list.addItem(item)
+
+        # Select the new scan to display its metadata.
+        self.scan_list.setCurrentItem(item)
+
+    def on_scan_failed(self, message: str) -> None:
+        """Report a specimen acquisition error."""
+
+        self.log_message(f"Scan acquisition failed: {message}")
+
+        QMessageBox.critical(
+            self,
+            "Scan Acquisition Failed",
+            message,
+        )
+
     def on_scan_visibility_changed(self, item):
         """Show or hide a scan when its checkbox changes."""
 
         scan_index = item.data(Qt.ItemDataRole.UserRole)
         curve = self.scan_curves.get(scan_index)
 
+        visible = item.checkState() == Qt.CheckState.Checked
+
+        print(
+            f"Scan {scan_index}: "
+            f"checked={visible}, "
+            f"curve_found={curve is not None}",
+            flush=True,
+        )
+
         if curve is not None:
-            visible = item.checkState() == Qt.CheckState.Checked
             curve.setVisible(visible)
+            self.spectrum_plot.autoRange()
 
     def on_active_baseline_changed(self, current, previous):
         """Update the active baseline and its preview."""
 
         if current is None:
+            self.active_baseline_index = None
+            self.baseline_plot.clear()
+            self.update_acquisition_controls()
             return
 
         self.active_baseline_index = current.data(
@@ -403,6 +1168,8 @@ class MSPMainWindow(QMainWindow):
             baseline.baseline_corrected,
             pen=pg.mkPen(color="#0072B2", width=1.5),
         )
+
+        self.update_acquisition_controls()
 
     def on_scan_selection_changed(self, current, previous):
         """Display metadata for the highlighted specimen scan."""
@@ -538,6 +1305,9 @@ class MSPMainWindow(QMainWindow):
         self.active_baseline_index = None
 
         self.setWindowTitle(f"MSP Control - {filename.name}")
+        self.refresh_events_table()
+        self.update_event_controls()
+        self.update_acquisition_controls()
 
     def on_edit_experiment_metadata(self):
         """Open the metadata dialog for the loaded experiment."""
@@ -572,6 +1342,14 @@ class MSPMainWindow(QMainWindow):
     def on_close_experiment(self):
         """Close the active experiment and clear its display."""
 
+        if self.acquisition_thread is not None:
+            QMessageBox.warning(
+                self,
+                "Acquisition in Progress",
+                "Wait for the current acquisition to finish before closing the experiment.",
+            )
+            return
+
         if self.controller.experiment is None:
             return
 
@@ -594,8 +1372,14 @@ class MSPMainWindow(QMainWindow):
         # Clear scan metadata.
         self.scan_metadata_view.clear()
 
-        self.setWindowTitle("MSP Control")
+        # Clear experiment events and reset the elapsed-time clock.
+        self.refresh_events_table()
+        self.update_elapsed_time()
 
+        self.update_event_controls()
+        self.setWindowTitle("MSP Control")
+        self.update_acquisition_controls()
+        
     def on_open_experiment(self):
         """Open an existing experiment from an HDF5 file."""
 
@@ -627,31 +1411,168 @@ class MSPMainWindow(QMainWindow):
                 f"Could not open the experiment:\n\n{exc}",
             )
 
-    def on_initialize_hardware(self):
-        """Initialize the persistent hardware connections."""
+    def on_load_protocol(self) -> None:
+        """Load acquisition settings from a JSON protocol."""
+
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Acquisition Protocol",
+            "",
+            "JSON files (*.json)",
+        )
+
+        if not filename:
+            return
+
+        try:
+            protocol = AcquisitionProtocol.load(filename)
+
+            # Check that all values fit the GUI controls.
+            fields = [
+                (self.start_nm_spin, protocol.start_nm),
+                (self.end_nm_spin, protocol.end_nm),
+                (self.step_nm_spin, protocol.step_nm),
+                (self.step_time_spin, protocol.step_time_ms),
+                (self.input_slit_spin, protocol.input_slit_nm),
+                (self.output_slit_spin, protocol.output_slit_nm),
+                (self.dark_scans_spin, protocol.dark_scans),
+                (self.baseline_scans_spin, protocol.baseline_scans),
+                (self.specimen_scans_spin, protocol.specimen_scans),
+            ]
+
+            for widget, value in fields:
+                if not widget.minimum() <= value <= widget.maximum():
+                    raise ValueError(
+                        f"Protocol value {value} is outside the "
+                        f"allowed range for this control"
+                    )
+
+            self.set_acquisition_protocol(protocol)
+            self.log_message(f"Loaded protocol: {filename}")
+
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            QMessageBox.warning(
+                self,
+                "Load Protocol Failed",
+                str(exc),
+            )
+
+    def on_save_protocol(self) -> None:
+        """Save the current acquisition settings to JSON."""
+
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Acquisition Protocol",
+            "",
+            "JSON files (*.json)",
+        )
+
+        if not filename:
+            return
+
+        try:
+            protocol = self.get_acquisition_protocol()
+
+            # Validate both acquisition configurations.
+            protocol.scan_config(baseline=True)
+            protocol.scan_config(baseline=False)
+
+            protocol.save(filename)
+            self.log_message(f"Saved protocol: {filename}")
+
+        except (OSError, ValueError, TypeError) as exc:
+            QMessageBox.warning(
+                self,
+                "Save Protocol Failed",
+                str(exc),
+            )
+
+    def on_initialize_hardware(self) -> None:
+        if self.acquisition_thread is not None:
+            QMessageBox.warning(
+                self,
+                "Acquisition in Progress",
+                "Wait for the current acquisition to finish before reinitializing hardware.",
+            )
+            return
+
+        self.log_message("Initializing hardware...")
 
         try:
             if self.hardware_manager is None:
-                self.hardware_manager = create_hardware_manager()
+                (
+                    self.hardware_manager,
+                    self.controller.metadata_collector,
+                    self.controller.acquisition,
+                ) = create_hardware_manager()
 
             self.hardware_manager.initialize()
+            self.hardware_initialized = True
+            self.update_acquisition_controls()
+
+            self.log_message("Hardware initialized successfully.")
+
+            QMessageBox.information(
+                self,
+                "Hardware",
+                "Hardware initialized successfully.",
+            )
 
         except Exception as exc:
+            self.hardware_initialized = False
+            self.update_acquisition_controls()
+            self.log_message(f"Hardware initialization failed: {exc}")
+
             QMessageBox.critical(
                 self,
-                "Hardware Initialization Failed",
+                "Hardware initialization failed",
+                str(exc),
+            )
+
+    def on_record_event(self) -> None:
+        """Record a manually entered experiment event."""
+
+        if self.controller.experiment is None:
+            return
+
+        description = self.event_description.text().strip()
+
+        if not description:
+            return
+
+        if self.controller.experiment is None:
+            QMessageBox.warning(
+                self,
+                "No Active Experiment",
+                "Open or create an experiment before recording an event.",
+            )
+            return
+
+        try:
+            event = self.controller.add_event(description)
+
+        except Exception as exc:
+            self.log_message(f"Failed to record event: {exc}")
+            QMessageBox.critical(
+                self,
+                "Event Recording Failed",
                 str(exc),
             )
             return
 
-        QMessageBox.information(
-            self,
-            "Hardware Initialization",
-            "Hardware initialization completed successfully.",
+        self.refresh_events_table()
+        self.event_description.clear()
+
+        self.log_message(
+            f"Event recorded: {event.description}"
         )
 
-def create_hardware_manager() -> HardwareManager:
-    """Construct and return the hardware manager."""
+def create_hardware_manager() -> tuple[
+    HardwareManager,
+    MetadataCollector,
+    AcquisitionController,
+]:
+    """Construct hardware objects without connecting to devices."""
 
     optoscan = OptoscanSerial("COM2")
 
@@ -664,7 +1585,28 @@ def create_hardware_manager() -> HardwareManager:
         field_stop_config,
     )
 
-    return HardwareManager(optoscan, field_stop)
+    hardware_manager = HardwareManager(
+        optoscan=optoscan,
+        field_stop=field_stop,
+    )
+
+    stage = StagePositionMonitor(StageConfig())
+    temperature = TemperatureMonitor(TemperatureConfig())
+
+    metadata_collector = MetadataCollector(
+        field_stop=field_stop,
+        stage=stage,
+        temperature=temperature,
+    )
+
+    daq = NIDaq(NIDaqConfig())
+
+    acquisition_controller = AcquisitionController(
+        daq=daq,
+        optoscan=optoscan,
+    )
+
+    return hardware_manager, metadata_collector, acquisition_controller
 
 
 def main():
