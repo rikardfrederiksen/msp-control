@@ -147,6 +147,53 @@ class OptoscanSerial:
 
         return response_text
 
+    def close_slits(self) -> str:
+        """Close the Optoscan slits."""
+        return self.send_command("close_slits")
+
+    def open_slits(
+        self,
+        wavelength_nm: float,
+        input_slit_nm: float,
+        output_slit_nm: float,
+    ) -> None:
+        """Position the monochromator, set slit widths, and open the slits."""
+
+        if wavelength_nm <= 0:
+            raise ValueError("Wavelength must be positive")
+
+        if input_slit_nm <= 0 or output_slit_nm <= 0:
+            raise ValueError("Slit widths must be positive")
+
+        try:
+            # Close slits before moving the grating.
+            self.close_slits()
+
+            # Position the grating at the requested wavelength.
+            self.send_command(
+                f"{round(wavelength_nm * 10)} scan_end !"
+            )
+            self.send_command("grating>scan_end")
+
+            # Configure the input and output slit widths.
+            self.send_command(
+                f"{round(input_slit_nm * 10)} scan_inslit_width !"
+            )
+            self.send_command(
+                f"{round(output_slit_nm * 10)} scan_exslit_width !"
+            )
+
+            # Open the slits.
+            self.send_command("open_slits")
+
+        except Exception:
+            # Attempt to leave the slits closed if an operation fails.
+            try:
+                self.close_slits()
+            except Exception:
+                pass
+            raise
+
     def configure_scan(self, config: ScanConfig) -> list[str]:
         """Configure the Optoscan for a wavelength scan.
 

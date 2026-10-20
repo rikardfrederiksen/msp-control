@@ -21,6 +21,7 @@ from msp_control.storage.hdf5 import (
     write_bleach,
     update_event,
     read_experiment,
+    update_scan_metadata,
 )
 
 class MSPController:
@@ -43,6 +44,7 @@ class MSPController:
         self,
         config: ScanConfig,
         polarization: Polarization,
+        metadata: dict | None = None,
     ) -> Baseline:
         """Acquire, process, persist, and add a baseline."""
 
@@ -60,6 +62,8 @@ class MSPController:
             if self.metadata_collector is not None
             else {}
         )
+        if metadata is not None:
+            pending_metadata.update(metadata)
 
         raw = self.acquisition.acquire(config)
 
@@ -85,6 +89,7 @@ class MSPController:
         config: ScanConfig,
         polarization: Polarization,
         baseline_index: int,
+        metadata: dict | None = None,
     ) -> Scan:
         """Acquire, process, persist, and add a specimen scan."""
 
@@ -115,7 +120,9 @@ class MSPController:
             if self.metadata_collector is not None
             else {}
         )
-        
+        if metadata is not None:
+            pending_metadata.update(metadata)
+
         raw = self.acquisition.acquire(config)
 
         scan = process_scan(
@@ -476,3 +483,31 @@ class MSPController:
 
         self.experiment = experiment
         self.filename = filename
+
+
+    def update_scan_metadata(
+        self,
+        scan_index: int,
+        metadata: dict,
+    ) -> None:
+        """Update editable metadata for an existing specimen scan."""
+
+        if self.experiment is None or self.filename is None:
+            raise RuntimeError("No experiment is active")
+
+        # Verify that the scan exists before modifying the file.
+        scan = self.experiment.get_scan(scan_index)
+
+        # Persist first. If this fails, leave the in-memory scan unchanged.
+        update_scan_metadata(
+            self.filename,
+            scan_index,
+            metadata,
+        )
+
+        # Synchronize the in-memory scan with the saved metadata.
+        for key, value in metadata.items():
+            if value is None:
+                scan.metadata.pop(key, None)
+            else:
+                scan.metadata[key] = value

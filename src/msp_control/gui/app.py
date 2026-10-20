@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 from datetime import datetime
+import json
 
 from PySide6.QtWidgets import (
     QApplication,
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QSpinBox,
     QRadioButton,
+    QComboBox,
 )
 
 
@@ -59,25 +61,42 @@ from msp_control.hardware.field_stop import (
 )
 
 
+def load_cell_types() -> list[str]:
+    """Load the available cell types from the project configuration."""
+
+    config_path = (
+        Path(__file__).resolve().parents[3]
+        / "config"
+        / "cell_types.json"
+    )
+
+    with config_path.open("r", encoding="utf-8") as f:
+        config = json.load(f)
+
+    return config["cell_types"]
+
+
 class BaselineAcquisitionWorker(QObject):
     """Run baseline acquisition outside the GUI thread."""
 
     finished = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, controller, config, polarization):
+    def __init__(self, controller, config, polarization, metadata=None):
         super().__init__()
         self.controller = controller
         self.config = config
         self.polarization = polarization
+        self.metadata = metadata
 
     @Slot()
     def run(self):
         try:
-            baseline = self.controller.acquire_baseline(
-                config=self.config,
-                polarization=self.polarization,
-            )
+           baseline = self.controller.acquire_baseline(
+               config=self.config,
+               polarization=self.polarization,
+               metadata=self.metadata,
+           )
         except Exception as exc:
             self.failed.emit(str(exc))
         else:
@@ -90,12 +109,15 @@ class ScanAcquisitionWorker(QObject):
     finished = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, controller, config, polarization, baseline_index):
+    def __init__(
+        self, controller, config, polarization, baseline_index, metadata=None
+    ):
         super().__init__()
         self.controller = controller
         self.config = config
         self.polarization = polarization
         self.baseline_index = baseline_index
+        self.metadata = metadata
 
     @Slot()
     def run(self):
@@ -104,6 +126,7 @@ class ScanAcquisitionWorker(QObject):
                 config=self.config,
                 polarization=self.polarization,
                 baseline_index=self.baseline_index,
+                metadata=self.metadata,
             )
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -160,10 +183,11 @@ class MSPMainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        load_protocol_action = file_menu.addAction(
+        self.load_protocol_action = file_menu.addAction(
             "&Load Protocol..."
         )
-        load_protocol_action.triggered.connect(
+        
+        self.load_protocol_action.triggered.connect(
             self.on_load_protocol
         )
 
@@ -349,7 +373,7 @@ class MSPMainWindow(QMainWindow):
 
         self.step_time_spin = QDoubleSpinBox()
         self.step_time_spin.setRange(1, 1000)
-        self.step_time_spin.setValue(20)
+        self.step_time_spin.setValue(2)
         self.step_time_spin.setSuffix(" ms")
 
         self.input_slit_spin = QDoubleSpinBox()
@@ -386,6 +410,29 @@ class MSPMainWindow(QMainWindow):
 
         self.hardware_layout.addWidget(scan_config_group)
 
+        # Field-stop dimensions used for subsequent acquisitions
+        field_stop_group = QGroupBox("Field Stop Dimensions")
+        field_stop_layout = QFormLayout(field_stop_group)
+
+        self.field_stop_height_spin = QDoubleSpinBox()
+        self.field_stop_height_spin.setRange(0.1, 1000.0)
+        self.field_stop_height_spin.setDecimals(1)
+        self.field_stop_height_spin.setSingleStep(0.5)
+        self.field_stop_height_spin.setValue(6.0)
+        self.field_stop_height_spin.setSuffix(" µm")
+
+        self.field_stop_width_spin = QDoubleSpinBox()
+        self.field_stop_width_spin.setRange(0.1, 1000.0)
+        self.field_stop_width_spin.setDecimals(1)
+        self.field_stop_width_spin.setSingleStep(0.5)
+        self.field_stop_width_spin.setValue(3.0)
+        self.field_stop_width_spin.setSuffix(" µm")
+
+        field_stop_layout.addRow("Height:", self.field_stop_height_spin)
+        field_stop_layout.addRow("Width:", self.field_stop_width_spin)
+
+        self.hardware_layout.addWidget(field_stop_group)
+
         for widget in (
                 self.start_nm_spin,
                 self.end_nm_spin,
@@ -404,6 +451,56 @@ class MSPMainWindow(QMainWindow):
 
         acquisition_group = QGroupBox("Acquisition")
         acquisition_layout = QVBoxLayout(acquisition_group)
+
+        # Manual monochromator controls
+        monochromator_group = QGroupBox("Monochromator")
+        monochromator_layout = QVBoxLayout(monochromator_group)
+
+        # Open / close buttons
+        slit_button_layout = QHBoxLayout()
+
+        self.open_slits_button = QPushButton("Open slits")
+        self.close_slits_button = QPushButton("Close slits")
+
+        self.open_slits_button.clicked.connect(self.on_open_slits)
+        self.close_slits_button.clicked.connect(self.on_close_slits)
+
+        slit_button_layout.addWidget(self.open_slits_button)
+        slit_button_layout.addWidget(self.close_slits_button)
+
+        monochromator_layout.addLayout(slit_button_layout)
+
+        # Manual wavelength and slit widths
+        manual_settings_layout = QHBoxLayout()
+
+        self.manual_wavelength_spin = QDoubleSpinBox()
+        self.manual_wavelength_spin.setRange(200, 1000)
+        self.manual_wavelength_spin.setValue(700)
+        self.manual_wavelength_spin.setSuffix(" nm")
+
+        self.manual_input_slit_spin = QDoubleSpinBox()
+        self.manual_input_slit_spin.setRange(0.1, 50)
+        self.manual_input_slit_spin.setValue(4)
+        self.manual_input_slit_spin.setSuffix(" nm")
+
+        self.manual_output_slit_spin = QDoubleSpinBox()
+        self.manual_output_slit_spin.setRange(0.1, 50)
+        self.manual_output_slit_spin.setValue(4)
+        self.manual_output_slit_spin.setSuffix(" nm")
+
+        for label, spin in (
+            ("Wavelength", self.manual_wavelength_spin),
+            ("Input slit", self.manual_input_slit_spin),
+            ("Output slit", self.manual_output_slit_spin),
+        ):
+            column = QVBoxLayout()
+            column.addWidget(QLabel(label))
+            column.addWidget(spin)
+            manual_settings_layout.addLayout(column)
+
+        monochromator_layout.addLayout(manual_settings_layout)
+
+        self.hardware_layout.addWidget(monochromator_group)
 
         # Polarization selection
         polarization_layout = QHBoxLayout()
@@ -434,6 +531,30 @@ class MSPMainWindow(QMainWindow):
         acquisition_layout.addWidget(self.acquire_scan_button)
 
         self.hardware_layout.addWidget(acquisition_group)
+
+        # Controls that must not change during acquisition.
+        self.acquisition_settings = (
+            self.start_nm_spin,
+            self.end_nm_spin,
+            self.step_nm_spin,
+            self.step_time_spin,
+            self.input_slit_spin,
+            self.output_slit_spin,
+            self.dark_scans_spin,
+            self.baseline_scans_spin,
+            self.specimen_scans_spin,
+            self.transverse_radio,
+            self.longitudinal_radio,
+        )
+
+        # Manual monochromator controls will be added here later.
+        self.manual_hardware_controls = (
+            self.open_slits_button,
+            self.close_slits_button,
+            self.manual_wavelength_spin,
+            self.manual_input_slit_spin,
+            self.manual_output_slit_spin,
+        )
 
         # Action of acquistion buttons
         self.acquire_baseline_button.clicked.connect(
@@ -474,14 +595,61 @@ class MSPMainWindow(QMainWindow):
         messages_panel = QGroupBox("Messages / Log")
         self.message_log = QPlainTextEdit()
         self.message_log.setReadOnly(True)
-        self.message_log.setMaximumBlockCount(1000
-                                              )
+        self.message_log.setMaximumBlockCount(1000)
+
+        scan_editor_panel = QGroupBox("Scan Metadata Editor")
         events_panel = QGroupBox("Experiment Events")
         clocks_panel = QGroupBox("Clocks")
 
         # Messages panel
         messages_layout = QVBoxLayout(messages_panel)
         messages_layout.addWidget(self.message_log)
+
+        # Scan metadata editor
+        scan_editor_layout = QVBoxLayout(scan_editor_panel)
+
+        self.editing_scan_label = QLabel("No scan selected")
+        scan_editor_layout.addWidget(self.editing_scan_label)
+
+        scan_editor_form = QFormLayout()
+
+        self.cell_type_combo = QComboBox()
+        self.cell_type_combo.addItem("Not assigned", userData=None)
+
+        for cell_type in load_cell_types():
+            self.cell_type_combo.addItem(cell_type, userData=cell_type)
+
+        self.cell_type_combo.setEnabled(False)
+
+        scan_editor_form.addRow("Cell type:", self.cell_type_combo)
+
+        self.scan_comment_edit = QPlainTextEdit()
+        self.scan_comment_edit.setPlaceholderText(
+            "Comments about this recording..."
+        )
+        self.scan_comment_edit.setEnabled(False)
+
+        scan_editor_form.addRow("Comment:", self.scan_comment_edit)
+
+        scan_editor_layout.addLayout(scan_editor_form)
+
+        self.save_scan_metadata_button = QPushButton("Save Metadata")
+        self.save_scan_metadata_button.setEnabled(False)
+
+        self.save_scan_metadata_button.clicked.connect(
+            self.on_save_scan_metadata
+        )
+
+        self.cell_type_combo.currentIndexChanged.connect(
+            self.on_scan_metadata_edited
+        )
+        self.scan_comment_edit.textChanged.connect(
+            self.on_scan_metadata_edited
+        )
+
+        scan_editor_layout.addWidget(self.save_scan_metadata_button)
+
+        scan_editor_layout.addStretch()
 
         # Experiment events panel
         events_layout = QVBoxLayout(events_panel)
@@ -551,10 +719,15 @@ class MSPMainWindow(QMainWindow):
 
         clocks_layout.addStretch()
 
-        for panel in (messages_panel, events_panel, clocks_panel):
+        for panel in (
+            messages_panel,
+            scan_editor_panel,
+            events_panel,
+            clocks_panel,
+        ):
             self.lower_splitter.addWidget(panel)
 
-        self.lower_splitter.setSizes([350, 350, 300])
+        self.lower_splitter.setSizes([300, 300, 350, 200])
 
         self.update_event_controls()
         self.update_acquisition_controls()
@@ -608,6 +781,7 @@ class MSPMainWindow(QMainWindow):
 
         self.baseline_list.clear()
         self.active_baseline_index = None
+        self.baseline_plot.clear()
 
         for baseline in self.experiment.baselines:
             item = QListWidgetItem(
@@ -628,6 +802,7 @@ class MSPMainWindow(QMainWindow):
             )
 
         self.scan_list.clear()
+        self.scan_metadata_view.clear()
         self.spectrum_plot.clear()
         self.scan_curves.clear()
 
@@ -772,6 +947,21 @@ class MSPMainWindow(QMainWindow):
     def update_acquisition_controls(self) -> None:
         """Enable acquisition buttons when their requirements are met."""
 
+        acquiring = self.acquisition_thread is not None
+
+        for widget in self.acquisition_settings:
+            widget.setEnabled(not acquiring)
+
+        manual_ready = (
+            self.hardware_initialized
+            and self.hardware_manager is not None
+            and self.hardware_manager.optoscan.is_open
+            and not acquiring
+        )
+
+        for widget in self.manual_hardware_controls:
+            widget.setEnabled(manual_ready)
+
         ready = (
             self.controller.experiment is not None
             and self.hardware_initialized
@@ -798,6 +988,8 @@ class MSPMainWindow(QMainWindow):
             except ValueError:
                 pass
 
+        self.load_protocol_action.setEnabled(not acquiring)
+        
         self.acquire_scan_button.setEnabled(scan_ready)
 
     def update_clocks(self) -> None:
@@ -901,6 +1093,13 @@ class MSPMainWindow(QMainWindow):
 
         return Polarization.LONGITUDINAL
 
+    def get_field_stop_metadata(self) -> dict:
+        """Return the current field-stop dimensions."""
+        return {
+            "field_stop_height_um": self.field_stop_height_spin.value(),
+            "field_stop_width_um": self.field_stop_width_spin.value(),
+        }
+
     def on_acquire_baseline(self) -> None:
         """Start baseline acquisition in a worker thread."""
 
@@ -931,6 +1130,7 @@ class MSPMainWindow(QMainWindow):
             self.controller,
             config,
             polarization,
+            metadata=self.get_field_stop_metadata(),
         )
 
         self.acquisition_worker.moveToThread(self.acquisition_thread)
@@ -1025,10 +1225,11 @@ class MSPMainWindow(QMainWindow):
         self.acquisition_thread = QThread(self)
 
         self.acquisition_worker = ScanAcquisitionWorker(
-            self.controller,
-            config,
-            polarization,
-            baseline_index,
+            controller=self.controller,
+            config=config,
+            polarization=polarization,
+            baseline_index=baseline_index,
+            metadata=self.get_field_stop_metadata(),
         )
 
         self.acquisition_worker.moveToThread(self.acquisition_thread)
@@ -1132,13 +1333,6 @@ class MSPMainWindow(QMainWindow):
 
         visible = item.checkState() == Qt.CheckState.Checked
 
-        print(
-            f"Scan {scan_index}: "
-            f"checked={visible}, "
-            f"curve_found={curve is not None}",
-            flush=True,
-        )
-
         if curve is not None:
             curve.setVisible(visible)
             self.spectrum_plot.autoRange()
@@ -1176,7 +1370,21 @@ class MSPMainWindow(QMainWindow):
 
         self.scan_metadata_view.clear()
 
-        if current is None:
+        if current is None or self.experiment is None:
+            self.editing_scan_label.setText("No scan selected")
+
+            self.cell_type_combo.blockSignals(True)
+            self.scan_comment_edit.blockSignals(True)
+
+            self.cell_type_combo.setCurrentIndex(0)
+            self.scan_comment_edit.clear()
+
+            self.cell_type_combo.blockSignals(False)
+            self.scan_comment_edit.blockSignals(False)
+
+            self.cell_type_combo.setEnabled(False)
+            self.scan_comment_edit.setEnabled(False)
+            self.save_scan_metadata_button.setEnabled(False)
             return
 
         scan_index = current.data(Qt.ItemDataRole.UserRole)
@@ -1185,6 +1393,27 @@ class MSPMainWindow(QMainWindow):
             s for s in self.experiment.scans
             if s.scan_index == scan_index
         )
+
+        self.editing_scan_label.setText(f"Editing Scan {scan_index:03d}")
+
+        # Prevent programmatic updates from triggering change detection.
+        self.cell_type_combo.blockSignals(True)
+        self.scan_comment_edit.blockSignals(True)
+
+        cell_type = scan.metadata.get("cell_type")
+        index = self.cell_type_combo.findData(cell_type)
+        self.cell_type_combo.setCurrentIndex(index if index >= 0 else 0)
+
+        self.scan_comment_edit.setPlainText(
+            scan.metadata.get("comment", "")
+        )
+
+        self.cell_type_combo.blockSignals(False)
+        self.scan_comment_edit.blockSignals(False)
+
+        self.cell_type_combo.setEnabled(True)
+        self.scan_comment_edit.setEnabled(True)
+        self.save_scan_metadata_button.setEnabled(False)
 
         config = scan.config
 
@@ -1234,6 +1463,71 @@ class MSPMainWindow(QMainWindow):
             )
 
         self.scan_metadata_view.resizeColumnToContents(0)
+
+    def on_scan_metadata_edited(self):
+        """Enable Save Metadata when the editor differs from saved values."""
+        if self.experiment is None:
+            return
+
+        current = self.scan_list.currentItem()
+        if current is None:
+            return
+
+        scan_index = current.data(Qt.ItemDataRole.UserRole)
+        scan = next(
+            (s for s in self.experiment.scans
+             if s.scan_index == scan_index),
+            None,
+        )
+        if scan is None:
+            return
+
+        cell_type = self.cell_type_combo.currentData()
+        comment = self.scan_comment_edit.toPlainText()
+
+        modified = (
+            cell_type != scan.metadata.get("cell_type")
+            or comment != scan.metadata.get("comment", "")
+        )
+
+        self.save_scan_metadata_button.setEnabled(modified)
+
+    def on_save_scan_metadata(self):
+        """Save editable metadata for the highlighted specimen scan."""
+
+        if self.experiment is None:
+            return
+
+        current = self.scan_list.currentItem()
+        if current is None:
+            return
+
+        scan_index = current.data(Qt.ItemDataRole.UserRole)
+
+        metadata = {
+            "cell_type": self.cell_type_combo.currentData(),
+            "comment": self.scan_comment_edit.toPlainText(),
+        }
+
+        try:
+            self.controller.update_scan_metadata(
+                scan_index,
+                metadata,
+            )
+        except Exception as exc:
+            self.log_message(
+                f"Failed to save metadata for scan {scan_index:03d}: {exc}"
+            )
+            return
+
+        self.save_scan_metadata_button.setEnabled(False)
+
+        # Refresh the read-only metadata table.
+        self.on_scan_selection_changed(current, None)
+
+        self.log_message(
+            f"Metadata saved for scan {scan_index:03d}"
+        )
 
     def on_new_experiment(self):
         """Create a new experiment with its metadata."""
@@ -1299,10 +1593,13 @@ class MSPMainWindow(QMainWindow):
         )
 
         self.baseline_list.clear()
+        self.active_baseline_index = None
+        self.baseline_plot.clear()
+
         self.scan_list.clear()
+        self.scan_metadata_view.clear()
         self.spectrum_plot.clear()
         self.scan_curves.clear()
-        self.active_baseline_index = None
 
         self.setWindowTitle(f"MSP Control - {filename.name}")
         self.refresh_events_table()
@@ -1501,12 +1798,21 @@ class MSPMainWindow(QMainWindow):
         try:
             if self.hardware_manager is None:
                 (
-                    self.hardware_manager,
-                    self.controller.metadata_collector,
-                    self.controller.acquisition,
+                    hardware_manager,
+                    metadata_collector,
+                    acquisition_controller,
                 ) = create_hardware_manager()
 
-            self.hardware_manager.initialize()
+                hardware_manager.initialize()
+
+                # Attach hardware only after successful initialization.
+                self.hardware_manager = hardware_manager
+                self.controller.metadata_collector = metadata_collector
+                self.controller.acquisition = acquisition_controller
+
+            else:
+                self.hardware_manager.initialize()
+
             self.hardware_initialized = True
             self.update_acquisition_controls()
 
@@ -1527,6 +1833,48 @@ class MSPMainWindow(QMainWindow):
                 self,
                 "Hardware initialization failed",
                 str(exc),
+            )
+
+    def on_open_slits(self):
+        """Position the monochromator and open its slits."""
+        if (
+            not self.hardware_initialized
+            or self.hardware_manager is None
+            or self.acquisition_thread is not None
+        ):
+            return
+
+        try:
+            self.hardware_manager.optoscan.open_slits(
+                wavelength_nm=self.manual_wavelength_spin.value(),
+                input_slit_nm=self.manual_input_slit_spin.value(),
+                output_slit_nm=self.manual_output_slit_spin.value(),
+            )
+
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Optoscan Error",
+                f"Could not open the slits:\n{exc}",
+            )
+
+    def on_close_slits(self):
+        """Close the monochromator slits."""
+        if (
+            not self.hardware_initialized
+            or self.hardware_manager is None
+            or self.acquisition_thread is not None
+        ):
+            return
+
+        try:
+            self.hardware_manager.optoscan.close_slits()
+
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Optoscan Error",
+                f"Could not close the slits:\n{exc}",
             )
 
     def on_record_event(self) -> None:

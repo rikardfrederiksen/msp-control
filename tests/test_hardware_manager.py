@@ -74,7 +74,7 @@ def test_initialize_only_field_stop():
     field_stop.connect.assert_called_once_with()
 
 
-def test_field_stop_failure_preserves_optoscan():
+def test_field_stop_failure_closes_newly_initialized_optoscan():
     optoscan = Mock()
     optoscan.is_open = False
 
@@ -90,7 +90,7 @@ def test_field_stop_failure_preserves_optoscan():
         manager.initialize()
 
     optoscan.initialize.assert_called_once_with()
-    optoscan.close.assert_not_called()
+    optoscan.close.assert_called_once_with()
     field_stop.connect.assert_called_once_with()
 
 

@@ -2,6 +2,8 @@ import pytest
 from msp_control.hardware.optoscan import OptoscanSerial
 from msp_control.config import ScanConfig, build_config_commands
 
+from unittest.mock import Mock
+
 import numpy as np
 
 class FakeSerial:
@@ -298,3 +300,31 @@ def test_scan_config_wavelengths():
         expected,
     )
 
+
+def test_manual_slit_control():
+    optoscan = OptoscanSerial(port="COM2")
+    optoscan.send_command = Mock(return_value="ok")
+
+    optoscan.open_slits(
+        wavelength_nm=700,
+        input_slit_nm=2,
+        output_slit_nm=2,
+    )
+
+    assert [
+        call.args[0]
+        for call in optoscan.send_command.call_args_list
+    ] == [
+        "close_slits",
+        "7000 scan_end !",
+        "grating>scan_end",
+        "20 scan_inslit_width !",
+        "20 scan_exslit_width !",
+        "open_slits",
+    ]
+
+    optoscan.send_command.reset_mock()
+
+    optoscan.close_slits()
+
+    optoscan.send_command.assert_called_once_with("close_slits")

@@ -19,6 +19,8 @@ from msp_control.storage.hdf5 import(
     read_scan_group,
     read_event,
     read_bleach,
+    write_baseline,
+    write_scan,
 )
 
 
@@ -206,6 +208,74 @@ def test_acquire_scan(tmp_path):
     )
     
     assert stored_scan.baseline_index == baseline.baseline_index
+
+
+
+def test_field_stop_metadata_persists_for_baseline_and_scan(tmp_path):
+    config = ScanConfig(
+        start_nm=500,
+        end_nm=520,
+        step_nm=10,
+        step_time_ms=2,
+        input_slit_nm=4,
+        output_slit_nm=4,
+        dark_scans=2,
+        data_scans=2,
+    )
+
+    filename = tmp_path / "experiment.h5"
+
+    controller = MSPController(
+        acquisition=FakeAcquisitionController(),
+    )
+    controller.create_new_experiment_file(filename)
+
+    # Acquire a baseline with the initial field-stop dimensions.
+    baseline = controller.acquire_baseline(
+        config=config,
+        polarization=Polarization.TRANSVERSE,
+        metadata={
+            "field_stop_height_um": 6.0,
+            "field_stop_width_um": 3.0,
+        },
+    )
+
+    # Change the dimensions before acquiring the specimen scan.
+    scan = controller.acquire_scan(
+        config=config,
+        polarization=Polarization.TRANSVERSE,
+        baseline_index=baseline.baseline_index,
+        metadata={
+            "field_stop_height_um": 8.0,
+            "field_stop_width_um": 4.0,
+        },
+    )
+
+    # Verify the in-memory metadata.
+    assert baseline.metadata["field_stop_height_um"] == 6.0
+    assert baseline.metadata["field_stop_width_um"] == 3.0
+
+    assert scan.metadata["field_stop_height_um"] == 8.0
+    assert scan.metadata["field_stop_width_um"] == 4.0
+
+    # Close and reopen the experiment from HDF5.
+    controller.close_experiment_file()
+    controller.open_experiment_file(filename)
+
+    loaded_baseline = controller.experiment.get_baseline(
+        baseline.baseline_index
+    )
+    loaded_scan = controller.experiment.get_scan(
+        scan.scan_index
+    )
+
+    # Verify that the dimensions survived the HDF5 round trip.
+    assert loaded_baseline.metadata["field_stop_height_um"] == 6.0
+    assert loaded_baseline.metadata["field_stop_width_um"] == 3.0
+
+    assert loaded_scan.metadata["field_stop_height_um"] == 8.0
+    assert loaded_scan.metadata["field_stop_width_um"] == 4.0
+
 
 def test_acquire_scan_rejects_missing_baseline_before_acquisition(
     tmp_path,
@@ -2075,3 +2145,50 @@ def test_acquire_digital_bleach_rejects_command_voltage(tmp_path):
     # No Event or Bleach should be created.
     assert controller.experiment.events == []
     assert controller.experiment.bleaches == []
+
+
+def test_update_scan_metadata(tmp_path, baseline, scan):
+    """Scan metadata updates persist to disk and memory."""
+
+    filename = tmp_path / "test.h5"
+
+    controller = MSPController()
+    controller.create_new_experiment_file(filename)
+
+    # Populate the experiment without requiring acquisition hardware.
+    write_baseline(filename, baseline)
+    write_scan(filename, scan)
+
+    controller.experiment.add_baseline(baseline)
+    controller.experiment.add_scan(scan)
+
+    # Update the selected scan.
+    controller.update_scan_metadata(
+        scan.scan_index,
+        {
+            "cell_type": "Rod",
+            "comment": "Dark-adapted recording",
+        },
+    )
+
+    # Check the in-memory scan.
+    assert scan.metadata["cell_type"] == "Rod"
+    assert scan.metadata["comment"] == "Dark-adapted recording"
+
+    # Check the persisted scan.
+    saved = read_scan(filename, scan.scan_index)
+
+    assert saved.metadata["cell_type"] == "Rod"
+    assert saved.metadata["comment"] == "Dark-adapted recording"
+
+    # Remove the classification.
+    controller.update_scan_metadata(
+        scan.scan_index,
+        {"cell_type": None},
+    )
+
+    assert "cell_type" not in scan.metadata
+
+    saved = read_scan(filename, scan.scan_index)
+    assert "cell_type" not in saved.metadata
+    assert saved.metadata["comment"] == "Dark-adapted recording"

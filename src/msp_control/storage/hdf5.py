@@ -230,6 +230,50 @@ def write_scan(
             raise
 
 
+def update_scan_metadata(
+    filename: str | Path,
+    scan_index: int,
+    metadata: dict,
+) -> None:
+    """Update editable metadata of an existing specimen scan."""
+
+    allowed_keys = {"cell_type", "comment"}
+
+    if not set(metadata).issubset(allowed_keys):
+        raise ValueError(
+            "Only cell_type and comment may be updated"
+        )
+
+    # None means remove the metadata attribute.
+    values = {
+        key: value
+        for key, value in metadata.items()
+        if value is not None
+    }
+    _validate_metadata(values)
+
+    with h5py.File(filename, "r+") as h5:
+        _validate_file(h5)
+
+        scan_path = f"scans/scan_{scan_index:03d}"
+
+        if scan_path not in h5:
+            raise KeyError(
+                f"Scan {scan_index} does not exist"
+            )
+
+        metadata_group = h5[f"{scan_path}/metadata"]
+
+        for key, value in metadata.items():
+            if value is None:
+                if key in metadata_group.attrs:
+                    del metadata_group.attrs[key]
+            else:
+                metadata_group.attrs[key] = value
+
+        h5.flush()
+
+
 def read_baseline(
     filename: str | Path,
     baseline_index: int,

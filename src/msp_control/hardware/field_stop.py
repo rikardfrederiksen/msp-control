@@ -79,10 +79,18 @@ class KinesisFieldStopDevice:
         return float(position)
 
     def close(self):
-        if self.device is not None:
-            self.device.StopPolling()
-            self.device.Disconnect()
-            self.device = None
+        if self.device is None:
+            return
+
+        device = self.device
+
+        try:
+            device.StopPolling()
+        finally:
+            try:
+                device.Disconnect()
+            finally:
+                self.device = None
 
     @classmethod
     def from_kinesis(cls, config: FieldStopConfig = FieldStopConfig()):

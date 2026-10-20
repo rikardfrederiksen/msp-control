@@ -122,6 +122,7 @@ def test_acquire_hardware_sequence():
         call.optoscan.wait_for_scan_complete(),
 
         call.daq.close_shutter(),
+        call.optoscan.close_slits(),
         call.daq.ir_on(),
         call.daq.close(),
     ]

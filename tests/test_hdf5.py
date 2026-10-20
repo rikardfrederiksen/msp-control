@@ -27,6 +27,7 @@ from msp_control.storage.hdf5 import (
     read_event,
     write_event,
     update_event,
+    update_scan_metadata,
 )
 
 
@@ -1209,3 +1210,56 @@ def test_empty_experiment_roundtrip(tmp_path):
     assert len(experiment.scan_groups) == 0
     assert len(experiment.events) == 0
     assert len(experiment.bleaches) == 0
+
+def test_update_scan_metadata(tmp_path, baseline, scan):
+    """Updating scan metadata preserves existing metadata and spectral data."""
+
+    filename = tmp_path / "test.h5"
+
+    create_experiment_file(filename)
+    write_baseline(filename, baseline)
+    write_scan(filename, scan)
+
+    original = read_scan(filename, scan.scan_index)
+    original_metadata = original.metadata.copy()
+    original_od = original.optical_density.copy()
+
+    # Add cell classification and comment.
+    update_scan_metadata(
+        filename,
+        scan.scan_index,
+        {
+            "cell_type": "Rod",
+            "comment": "Dark-adapted recording",
+        },
+    )
+
+    updated = read_scan(filename, scan.scan_index)
+
+    assert original.metadata["cell_type"] == "rod"
+    assert updated.metadata["cell_type"] == "Rod"
+    assert updated.metadata["comment"] == "Dark-adapted recording"
+
+    # Verify that all unrelated metadata remains unchanged.
+    for key, value in original_metadata.items():
+        if key not in {"cell_type", "comment"}:
+            assert updated.metadata[key] == value
+
+    # Verify that the spectral data is unchanged.
+    np.testing.assert_array_equal(
+        updated.optical_density,
+        original_od,
+    )
+
+    # Remove the cell classification.
+    update_scan_metadata(
+        filename,
+        scan.scan_index,
+        {"cell_type": None},
+    )
+
+    updated = read_scan(filename, scan.scan_index)
+
+    assert "cell_type" not in updated.metadata
+    assert updated.metadata["comment"] == "Dark-adapted recording"
+    

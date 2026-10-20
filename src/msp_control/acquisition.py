@@ -66,9 +66,16 @@ class AcquisitionController:
             self.optoscan.wait_for_scan_complete()
 
         finally:
-            self.daq.close_shutter()
-            self.daq.ir_on()
-            self.daq.close()
+            try:
+                self.daq.close_shutter()
+            finally:
+                try:
+                    self.optoscan.close_slits()
+                finally:
+                    try:
+                        self.daq.ir_on()
+                    finally:
+                        self.daq.close()
 
         return RawAcquisition(
             dark=dark_sweeps,

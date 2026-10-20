@@ -1,0 +1,13 @@
+
+{
+  "cell_types": [
+      "Rod",
+      "Cone",
+      "UVS cone",
+      "SWS cone",
+      "MWS cone",
+      "LWS cone",
+      "Rod cluster",  
+      "Other"
+  ]
+}

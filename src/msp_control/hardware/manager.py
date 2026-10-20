@@ -19,11 +19,32 @@ class HardwareManager:
     def initialize(self) -> None:
         """Initialize persistent hardware connections."""
 
-        if not self.optoscan.is_open:
-            self.optoscan.initialize()
+        optoscan_was_open = self.optoscan.is_open
+        field_stop_was_connected = self.field_stop.is_connected
 
-        if not self.field_stop.is_connected:
-            self.field_stop.connect()
+        try:
+            if not optoscan_was_open:
+                self.optoscan.initialize()
+
+            if not field_stop_was_connected:
+                self.field_stop.connect()
+
+        except Exception:
+            # Only close devices that were not connected before
+            # this initialization attempt.
+            if not field_stop_was_connected:
+                try:
+                    self.field_stop.close()
+                except Exception:
+                    pass
+
+            if not optoscan_was_open:
+                try:
+                    self.optoscan.close()
+                except Exception:
+                    pass
+
+            raise
 
     def disconnect(self) -> None:
         """Disconnect both persistent hardware devices."""
