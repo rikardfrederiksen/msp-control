@@ -3,6 +3,8 @@ from pathlib import Path
 from datetime import datetime
 import json
 
+import numpy as np
+
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -32,10 +34,12 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QRadioButton,
     QComboBox,
+    QCheckBox,
 )
 
 
 
+from PySide6.QtGui import QFont
 from PySide6.QtCore import Qt, QTimer, QObject, QThread, Signal, Slot
 import pyqtgraph as pg
 
@@ -59,6 +63,20 @@ from msp_control.hardware.field_stop import (
     FieldStopMonitor,
     KinesisFieldStopDevice,
 )
+
+
+SCAN_COLORS = [
+    "#56B4E9",  # Sky blue
+    "#E69F00",  # Orange
+    "#009E73",  # Bluish green
+    "#F0E442",  # Yellow
+    "#CC79A7",  # Reddish purple
+    "#D55E00",  # Vermilion
+    "#0072B2",  # Blue
+    "#FFFFFF",  # White
+    "#999999",  # Gray
+    "#AA77FF",  # Violet
+]
 
 
 def load_cell_types() -> list[str]:
@@ -147,7 +165,7 @@ class MSPMainWindow(QMainWindow):
         self.acquisition_worker = None
 
         self.setWindowTitle("MSP Control")
-        self.resize(1400, 800)
+        self.resize(2400, 1600)
 
         self.controller = MSPController()
         self.experiment = None
@@ -223,13 +241,43 @@ class MSPMainWindow(QMainWindow):
         # --------------------------------------------------
 
         self.spectrum_plot = pg.PlotWidget()
-        self.spectrum_plot.setBackground("w")
+        self.spectrum_plot.getAxis("left").enableAutoSIPrefix(False)
+        self.spectrum_legend = self.spectrum_plot.addLegend(
+            offset=(-10, 10)
+        )
+        self.spectrum_legend.setLabelTextSize("16pt")
+        self.spectrum_legend.setLabelTextColor("#B0B0B0")
+        self.spectrum_legend.hide()
+        self.spectrum_plot.setBackground("#171B22")
 
+        # Axis tick labels
+        tick_font = QFont()
+        tick_font.setPointSize(16)
+        tick_font.setBold(True)
+
+        # Axis titles
+        self.axis_label_style = {
+            "color": "#B0B0B0",
+            "font-size": "18pt",
+            "font-weight": "bold",
+        }
+
+        for axis_name in ("left", "bottom"):
+            axis = self.spectrum_plot.getAxis(axis_name)
+
+            # Thicker axis lines and tick marks
+            axis.setPen(pg.mkPen(self.axis_label_style["color"], width=2.5))
+
+            # Tick label appearance
+            axis.setTextPen(pg.mkPen(self.axis_label_style["color"]))
+            axis.setTickFont(tick_font)
+
+        # Axis titles
         self.spectrum_plot.setLabel(
-            "bottom", "Wavelength", units="nm"
+            "bottom", "Wavelength", units="nm", **self.axis_label_style
         )
         self.spectrum_plot.setLabel(
-            "left", "Optical density"
+            "left", "Optical density", **self.axis_label_style
         )
 
         self.spectrum_plot.showGrid(x=True, y=True, alpha=0.2)
@@ -240,6 +288,7 @@ class MSPMainWindow(QMainWindow):
 
         self.scan_list = QListWidget()
         self.scan_list.setMinimumWidth(120)
+        self.scan_list.setMinimumHeight(800)
 
         self.scan_curves = {}
 
@@ -256,7 +305,7 @@ class MSPMainWindow(QMainWindow):
         # --------------------------------------------------
 
         self.baseline_list = QListWidget()
-        self.baseline_list.setMaximumHeight(150)
+        self.baseline_list.setMaximumHeight(450)
 
         self.baseline_list.currentItemChanged.connect(
             self.on_active_baseline_changed
@@ -274,15 +323,33 @@ class MSPMainWindow(QMainWindow):
         baseline_layout.addWidget(QLabel("Baseline spectrum"))
 
         self.baseline_plot = pg.PlotWidget()
-        self.baseline_plot.setBackground("w")
+        self.baseline_plot.setBackground("#171B22")
         self.baseline_plot.setMinimumHeight(150)
         self.baseline_plot.setMaximumHeight(220)
 
+        # Baseline plot axis styling
+        baseline_tick_font = QFont()
+        baseline_tick_font.setPointSize(11)
+        baseline_tick_font.setBold(True)
+
+        baseline_label_style = {
+            "color": "#B0B0B0",
+            "font-size": "12pt",
+            "font-weight": "bold",
+        }
+
+        for axis_name in ("left", "bottom"):
+            axis = self.baseline_plot.getAxis(axis_name)
+
+            axis.setPen(pg.mkPen("#B0B0B0", width=2))
+            axis.setTextPen(pg.mkPen("#B0B0B0"))
+            axis.setTickFont(baseline_tick_font)
+
         self.baseline_plot.setLabel(
-            "bottom", "Wavelength", units="nm"
+            "bottom", "Wavelength", units="nm", **baseline_label_style,
         )
         self.baseline_plot.setLabel(
-            "left", "Signal", units="V"
+            "left", "Signal", units="V", **baseline_label_style,
         )
 
         self.baseline_plot.showGrid(x=True, y=True, alpha=0.2)
@@ -335,8 +402,131 @@ class MSPMainWindow(QMainWindow):
             stretch=1
         )
 
-        plot_layout.addWidget(QLabel("Plot controls"))
+        plot_controls_layout = QHBoxLayout()
 
+        plot_controls_layout.addWidget(QLabel("Display:"))
+
+        self.plot_mode_combo = QComboBox()
+        self.plot_mode_combo.addItem("Optical density", userData="od")
+        self.plot_mode_combo.addItem("Scan", userData="scan")
+        self.plot_mode_combo.addItem("Baseline", userData="baseline")
+
+        plot_controls_layout.addWidget(self.plot_mode_combo)
+        self.zero_correction_checkbox = QCheckBox("Zero correction")
+        plot_controls_layout.addWidget(self.zero_correction_checkbox)
+
+        self.zero_start_spin = QDoubleSpinBox()
+        self.zero_start_spin.setRange(200, 1000)
+        self.zero_start_spin.setValue(700)
+        self.zero_start_spin.setSuffix(" nm")
+        plot_controls_layout.addWidget(self.zero_start_spin)
+
+        self.zero_end_spin = QDoubleSpinBox()
+        self.zero_end_spin.setRange(200, 1000)
+        self.zero_end_spin.setValue(720)
+        self.zero_end_spin.setSuffix(" nm")
+        plot_controls_layout.addWidget(self.zero_end_spin)
+
+        self.show_legend_checkbox = QCheckBox("Show legend")
+        plot_controls_layout.addWidget(self.show_legend_checkbox)
+
+        self.plot_home_button = QPushButton("Home")
+        self.plot_home_button.setToolTip(
+            "Automatically scale both axes to the displayed spectra"
+        )
+        plot_controls_layout.addWidget(self.plot_home_button)
+
+        plot_controls_layout.addWidget(QLabel("Mouse:"))
+
+        self.zoom_mode_combo = QComboBox()
+        self.zoom_mode_combo.addItem("X + Y", userData="xy")
+        self.zoom_mode_combo.addItem("X only", userData="x")
+        self.zoom_mode_combo.addItem("Y only", userData="y")
+
+        self.zoom_mode_combo.setToolTip(
+            "Select which axes respond to mouse-wheel zoom and dragging"
+        )
+
+        plot_controls_layout.addWidget(self.zoom_mode_combo)
+        
+        plot_controls_layout.addStretch()
+
+        self.zero_start_line = pg.InfiniteLine(
+            pos=self.zero_start_spin.value(),
+            angle=90,
+            movable=True,
+            pen=pg.mkPen("#D55E00", width=1.5, style=Qt.PenStyle.DashLine),
+            hoverPen=pg.mkPen("#D55E00", width=2.5),
+        )
+
+        self.zero_end_line = pg.InfiniteLine(
+            pos=self.zero_end_spin.value(),
+            angle=90,
+            movable=True,
+            pen=pg.mkPen("#0072B2", width=1.5, style=Qt.PenStyle.DashLine),
+            hoverPen=pg.mkPen("#0072B2", width=2.5),
+        )
+
+        self.spectrum_plot.addItem(self.zero_start_line, ignoreBounds=True)
+        self.spectrum_plot.addItem(self.zero_end_line, ignoreBounds=True)
+
+        self.zero_start_line.hide()
+        self.zero_end_line.hide()
+
+        plot_layout.addLayout(plot_controls_layout)
+
+        self.plot_mode_combo.currentIndexChanged.connect(
+            self.on_plot_mode_changed
+        )
+
+        self.zero_correction_checkbox.toggled.connect(
+            lambda checked: self.refresh_spectrum_plot(auto_range=False)
+        )
+        self.zero_start_spin.valueChanged.connect(
+            lambda value: self.refresh_spectrum_plot(auto_range=False)
+        )
+
+        self.zero_end_spin.valueChanged.connect(
+            lambda value: self.refresh_spectrum_plot(auto_range=False)
+        )
+
+        self.zero_start_spin.valueChanged.connect(
+            self.zero_start_line.setValue
+        )
+        self.zero_end_spin.valueChanged.connect(
+            self.zero_end_line.setValue
+        )
+
+        self.zero_start_line.sigPositionChanged.connect(
+            lambda: self.on_zero_cursor_moved(
+                self.zero_start_line, self.zero_start_spin
+            )
+        )
+        self.zero_end_line.sigPositionChanged.connect(
+            lambda: self.on_zero_cursor_moved(
+                self.zero_end_line, self.zero_end_spin
+            )
+        )
+        self.zero_start_line.sigPositionChangeFinished.connect(
+            lambda: self.refresh_spectrum_plot(auto_range=False)
+        )
+
+        self.zero_end_line.sigPositionChangeFinished.connect(
+            lambda: self.refresh_spectrum_plot(auto_range=False)
+        )
+        
+        self.plot_home_button.clicked.connect(
+            self.spectrum_plot.autoRange
+        )
+
+        self.zoom_mode_combo.currentIndexChanged.connect(
+            self.on_zoom_mode_changed
+        )
+
+        self.show_legend_checkbox.toggled.connect(
+            lambda checked: self.refresh_spectrum_plot(auto_range=False)
+        )
+        
         # --------------------------------------------------
         # Column 4: MSP and bleaching controls
         # --------------------------------------------------
@@ -587,7 +777,7 @@ class MSPMainWindow(QMainWindow):
         self.splitter.setStretchFactor(2, 1)
         self.splitter.setStretchFactor(3, 0)
 
-        self.splitter.setSizes([280, 190, 700, 300])
+        self.splitter.setSizes([300, 350, 700, 350])
 
         # Lower panel: messages, events, and clocks
         self.lower_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -806,22 +996,13 @@ class MSPMainWindow(QMainWindow):
         self.spectrum_plot.clear()
         self.scan_curves.clear()
 
-        colors = [
-            "#0072B2",
-            "#D55E00",
-            "#009E73",
-            "#CC79A7",
-            "#E69F00",
-            "#56B4E9",
-        ]
-
         for scan in self.experiment.scans:
-            color = colors[scan.scan_index % len(colors)]
+            color = SCAN_COLORS[scan.scan_index % len(SCAN_COLORS)]
 
             curve = self.spectrum_plot.plot(
                 scan.wavelength,
                 scan.optical_density,
-                pen=pg.mkPen(color=color, width=1.5),
+                pen=pg.mkPen(color=color, width=3.5),
             )
 
             curve.setVisible(False)
@@ -1272,21 +1453,12 @@ class MSPMainWindow(QMainWindow):
             f"Scan {scan.scan_index} acquired successfully"
         )
 
-        colors = [
-            "#0072B2",
-            "#D55E00",
-            "#009E73",
-            "#CC79A7",
-            "#E69F00",
-            "#56B4E9",
-        ]
-
-        color = colors[scan.scan_index % len(colors)]
+        color = SCAN_COLORS[scan.scan_index % len(SCAN_COLORS)]
 
         curve = self.spectrum_plot.plot(
             scan.wavelength,
             scan.optical_density,
-            pen=pg.mkPen(color=color, width=1.5),
+            pen=pg.mkPen(color=color, width=3.5),
         )
 
         self.scan_curves[scan.scan_index] = curve
@@ -1314,6 +1486,11 @@ class MSPMainWindow(QMainWindow):
         # Select the new scan to display its metadata.
         self.scan_list.setCurrentItem(item)
 
+        self.plot_mode_combo.setCurrentIndex(0)
+        self.zero_correction_checkbox.setChecked(False)
+        self.show_legend_checkbox.setChecked(False)
+        self.refresh_spectrum_plot()
+
     def on_scan_failed(self, message: str) -> None:
         """Report a specimen acquisition error."""
 
@@ -1326,16 +1503,8 @@ class MSPMainWindow(QMainWindow):
         )
 
     def on_scan_visibility_changed(self, item):
-        """Show or hide a scan when its checkbox changes."""
-
-        scan_index = item.data(Qt.ItemDataRole.UserRole)
-        curve = self.scan_curves.get(scan_index)
-
-        visible = item.checkState() == Qt.CheckState.Checked
-
-        if curve is not None:
-            curve.setVisible(visible)
-            self.spectrum_plot.autoRange()
+        """Update the plot when a scan checkbox changes."""
+        self.refresh_spectrum_plot()
 
     def on_active_baseline_changed(self, current, previous):
         """Update the active baseline and its preview."""
@@ -1360,7 +1529,7 @@ class MSPMainWindow(QMainWindow):
         self.baseline_plot.plot(
             baseline.wavelength,
             baseline.baseline_corrected,
-            pen=pg.mkPen(color="#0072B2", width=1.5),
+            pen=pg.mkPen(color="#56B4E9", width=2.5),
         )
 
         self.update_acquisition_controls()
@@ -1914,6 +2083,135 @@ class MSPMainWindow(QMainWindow):
         self.log_message(
             f"Event recorded: {event.description}"
         )
+
+    def on_plot_mode_changed(self, index):
+        """Update the displayed quantity without modifying stored data."""
+
+        self.refresh_spectrum_plot()
+
+    def on_zero_cursor_moved(self, line, spinbox):
+        """Synchronize a wavelength control with its plot cursor."""
+
+        spinbox.blockSignals(True)
+        spinbox.setValue(line.value())
+        spinbox.blockSignals(False)
+
+    def on_zoom_mode_changed(self):
+        """Control which plot axes respond to mouse interactions."""
+
+        mode = self.zoom_mode_combo.currentData()
+
+        view_box = self.spectrum_plot.getViewBox()
+
+        view_box.setMouseEnabled(
+            x=mode in ("xy", "x"),
+            y=mode in ("xy", "y"),
+        )
+        
+    def refresh_spectrum_plot(self, auto_range=True):
+        """Update displayed spectra and optionally reset the plot range."""
+
+        if self.experiment is None:
+            return
+
+        mode = self.plot_mode_combo.currentData()
+
+        plot_item = self.spectrum_plot.getPlotItem()
+
+        for line in (self.zero_start_line, self.zero_end_line):
+            if line not in plot_item.items:
+                self.spectrum_plot.addItem(line, ignoreBounds=True)
+
+        show_zero_cursors = (
+            mode == "od"
+            and self.zero_correction_checkbox.isChecked()
+        )
+
+        self.zero_start_line.setVisible(show_zero_cursors)
+        self.zero_end_line.setVisible(show_zero_cursors)
+
+        displayed_baselines = set()
+        self.spectrum_legend.clear()
+
+        for i in range(self.scan_list.count()):
+            item = self.scan_list.item(i)
+            scan_index = item.data(Qt.ItemDataRole.UserRole)
+            scan = self.experiment.get_scan(scan_index)
+
+            curve = self.scan_curves.get(scan_index)
+
+            if curve is None:
+                continue
+
+            if mode == "od":
+                wavelength = scan.wavelength
+                values = scan.optical_density
+
+                if self.zero_correction_checkbox.isChecked():
+                    start = self.zero_start_spin.value()
+                    end = self.zero_end_spin.value()
+
+                    mask = (
+                        (wavelength >= min(start, end))
+                        & (wavelength <= max(start, end))
+                        & np.isfinite(values)
+                    )
+
+                    if np.any(mask):
+                        values = values - np.mean(values[mask])
+
+            elif mode == "scan":
+                wavelength = scan.wavelength
+                values = scan.specimen_corrected
+
+            elif mode == "baseline":
+                baseline = self.experiment.get_baseline(
+                    scan.baseline_index
+                )
+                wavelength = baseline.wavelength
+                values = baseline.baseline_corrected
+
+            else:
+                return
+
+            curve.setData(wavelength, values)
+
+            visible = item.checkState() == Qt.CheckState.Checked
+
+            if mode == "baseline" and visible:
+                if scan.baseline_index in displayed_baselines:
+                    visible = False
+                else:
+                    displayed_baselines.add(scan.baseline_index)
+
+            curve.setVisible(visible)
+            if visible and self.show_legend_checkbox.isChecked():
+                if mode == "baseline":
+                    label = (
+                        f"Baseline {baseline.baseline_index:03d} "
+                        f"({baseline.polarization.value})"
+                    )
+                else:
+                    label = (
+                        f"Scan {scan.scan_index:03d} "
+                        f"({scan.polarization.value})"
+                    )
+
+                self.spectrum_legend.addItem(curve, label)
+        self.spectrum_legend.setVisible(
+            self.show_legend_checkbox.isChecked()
+        )
+
+        if mode == "od":
+            self.spectrum_plot.setLabel(
+                "left", "Optical density", **self.axis_label_style
+            )
+        else:
+            self.spectrum_plot.setLabel(
+                "left", "Signal", units="V", **self.axis_label_style
+            )
+        if auto_range:
+            self.spectrum_plot.autoRange()
 
 def create_hardware_manager() -> tuple[
     HardwareManager,
