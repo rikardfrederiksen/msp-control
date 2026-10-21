@@ -33,6 +33,8 @@ class NIDaqConfig:
     bleach_505_output: str = "port0/line2"
     bleach_505_monitor: str = "ai6"
 
+    photodiode_input: str = "ai5"
+
     nominal_sample_rate: float = 10_000.0
     read_timeout: float = 10.0
 
@@ -71,6 +73,10 @@ class NIDaqConfig:
     @property
     def bleach_505_monitor_channel(self) -> str:
         return f"{self.device}/{self.bleach_505_monitor}"
+
+    @property
+    def photodiode_physical_channel(self) -> str:
+        return f"{self.device}/{self.photodiode_input}"
 
 
 class NIDaq:
@@ -278,6 +284,7 @@ class NIDaq:
         led_channel: int,
         samples: int,
         sample_rate_hz: float,
+        include_photodiode: bool = False,
     ) -> None:
         """Configure finite analog acquisition of an LED monitor."""
 
@@ -304,6 +311,12 @@ class NIDaq:
                 physical_channel,
                 terminal_config=TerminalConfiguration.DIFF,
             )
+
+            if include_photodiode:
+                task.ai_channels.add_ai_voltage_chan(
+                    self.config.photodiode_physical_channel,
+                    terminal_config=TerminalConfiguration.DIFF,
+                )
 
             task.timing.cfg_samp_clk_timing(
                 rate=sample_rate_hz,
@@ -346,7 +359,11 @@ class NIDaq:
         samples: int,
         timeout: float,
     ) -> np.ndarray:
-        """Read the LED monitor waveform from the bleach AI task."""
+        """Read LED monitor data, optionally including the photodiode.
+        
+        Returns a 1D array for monitor-only acquisition, or a 2D array
+        with monitor and photodiode signals in that order.
+        """
 
         if self._bleach_ai_task is None:
             raise RuntimeError("Bleach monitor is not configured")

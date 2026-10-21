@@ -94,6 +94,60 @@ def load_cell_types() -> list[str]:
     return config["cell_types"]
 
 
+def find_calibration_files() -> list[Path]:
+    """Return available calibration files, newest first."""
+
+    calibration_dir = (
+        Path(__file__).resolve().parents[3]
+        / "config"
+        / "calibrations"
+    )
+
+    if not calibration_dir.is_dir():
+        return []
+
+    return sorted(
+        calibration_dir.glob("*.h5"),
+        key=lambda path: path.name,
+        reverse=True,
+    )
+
+
+def calibration_settings_path() -> Path:
+    """Return the path to the calibration settings file."""
+    return (
+        Path(__file__).resolve().parents[3]
+        / "config"
+        / "calibration_settings.json"
+    )
+
+
+def load_default_calibration() -> str | None:
+    """Return the configured default calibration filename."""
+    path = calibration_settings_path()
+
+    if not path.is_file():
+        return None
+
+    with path.open("r", encoding="utf-8") as f:
+        settings = json.load(f)
+
+    return settings.get("default_calibration")
+
+
+def save_default_calibration(filename: str) -> None:
+    """Save the default calibration filename."""
+    path = calibration_settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(
+            {"default_calibration": filename},
+            f,
+            indent=2,
+        )
+
+
 class BaselineAcquisitionWorker(QObject):
     """Run baseline acquisition outside the GUI thread."""
 
@@ -755,8 +809,55 @@ class MSPMainWindow(QMainWindow):
             self.on_acquire_scan
         )
 
-        # Placeholder for bleaching controls
-        self.hardware_layout.addWidget(QLabel("Bleaching controls"))
+        # --------------------------------------------------
+        # Light calibration
+        # --------------------------------------------------
+
+        calibration_group = QGroupBox("Light Calibration")
+        calibration_layout = QVBoxLayout(calibration_group)
+
+        # Calibration file selection
+        self.calibration_combo = QComboBox()
+        self.calibration_combo.addItem("No calibration selected", None)
+
+        for calibration_file in find_calibration_files():
+            self.calibration_combo.addItem(
+                calibration_file.name,
+                calibration_file,
+            )
+
+        default_filename = load_default_calibration()
+
+        if default_filename is not None:
+            for index in range(1, self.calibration_combo.count()):
+                calibration_file = self.calibration_combo.itemData(index)
+
+                if calibration_file.name == default_filename:
+                    self.calibration_combo.setCurrentIndex(index)
+                    break
+
+        calibration_layout.addWidget(
+            QLabel("Calibration file:")
+        )
+        calibration_layout.addWidget(self.calibration_combo)
+
+        # New calibration button
+        self.new_calibration_button = QPushButton("New Calibration...")
+        self.new_calibration_button.setEnabled(False)
+
+        calibration_layout.addWidget(self.new_calibration_button)
+
+        self.hardware_layout.addWidget(calibration_group)
+
+        # --------------------------------------------------
+        # Bleaching controls (to be implemented)
+        # --------------------------------------------------
+
+        self.bleaching_group = QGroupBox("Bleaching")
+        self.bleaching_group.setEnabled(False)
+
+        self.hardware_layout.addWidget(self.bleaching_group)
+
         self.hardware_layout.addStretch()
 
         hardware_panel.setWidget(self.hardware_controls)
