@@ -1,0 +1,11 @@
+{
+  "start_nm": 360.0,
+  "end_nm": 720.0,
+  "step_nm": 2.0,
+  "step_time_ms": 20.0,
+  "input_slit_nm": 4.0,
+  "output_slit_nm": 4.0,
+  "dark_scans": 2,
+  "baseline_scans": 20,
+  "specimen_scans": 3
+}

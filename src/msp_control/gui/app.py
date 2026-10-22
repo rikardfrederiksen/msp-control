@@ -35,9 +35,8 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QComboBox,
     QCheckBox,
+    QSizePolicy,
 )
-
-
 
 from PySide6.QtGui import QFont
 from PySide6.QtCore import Qt, QTimer, QObject, QThread, Signal, Slot
@@ -70,6 +69,10 @@ from msp_control.calibration.settings import (
     load_default_calibration,
     save_default_calibration,
 )
+from msp_control.calibration.storage import read_calibration
+from msp_control.calibration.bleach import estimate_bleach
+from msp_control.bleach import BleachController
+from msp_control.calibration.waveform import BleachWaveformConfig
 
 
 SCAN_COLORS = [
@@ -159,6 +162,36 @@ class ScanAcquisitionWorker(QObject):
             self.finished.emit(scan)
 
 
+class BleachAcquisitionWorker(QObject):
+    """Run bleaching outside the GUI thread."""
+
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, controller, led_channel, config,
+                 nd_filter, command_voltage):
+        super().__init__()
+        self.controller = controller
+        self.led_channel = led_channel
+        self.config = config
+        self.nd_filter = nd_filter
+        self.command_voltage = command_voltage
+
+    @Slot()
+    def run(self):
+        try:
+            bleach = self.controller.acquire_bleach(
+                led_channel=self.led_channel,
+                config=self.config,
+                nd_filter=self.nd_filter,
+                command_voltage=self.command_voltage,
+            )
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        else:
+            self.finished.emit(bleach)
+
+
 class MSPMainWindow(QMainWindow):
     """Main window for the MSP control application."""
 
@@ -176,6 +209,10 @@ class MSPMainWindow(QMainWindow):
 
         self.controller = MSPController()
         self.experiment = None
+
+        self.message_log = QPlainTextEdit()
+        self.message_log.setReadOnly(True)
+        self.message_log.setMaximumBlockCount(1000)
 
         # Load the controlled metadata vocabulary
         self.metadata_registry = load_metadata_registry(
@@ -789,15 +826,169 @@ class MSPMainWindow(QMainWindow):
         self.hardware_layout.addWidget(calibration_group)
 
         # --------------------------------------------------
-        # Bleaching controls (to be implemented)
+        # Bleaching controls
         # --------------------------------------------------
 
         self.bleaching_group = QGroupBox("Bleaching")
-        self.bleaching_group.setEnabled(False)
+        bleaching_layout = QVBoxLayout(self.bleaching_group)
+        bleaching_layout.setSpacing(8)
+
+        def add_bleach_field(row, label, widget):
+            """Add a compact control with its label above it."""
+            field = QVBoxLayout()
+            field.setSpacing(2)
+            field.addWidget(QLabel(label))
+            field.addWidget(widget)
+            row.addLayout(field)
+
+        # --------------------------------------------------
+        # First row: LED, duration, ND filter
+        # --------------------------------------------------
+
+        bleach_row1 = QHBoxLayout()
+        bleach_row1.setSpacing(8)
+
+        self.bleach_led_combo = QComboBox()
+        add_bleach_field(bleach_row1, "LED", self.bleach_led_combo)
+
+        self.bleach_duration_spin = QDoubleSpinBox()
+        self.bleach_duration_spin.setRange(0.01, 3600.0)
+        self.bleach_duration_spin.setDecimals(2)
+        self.bleach_duration_spin.setValue(1.0)
+        self.bleach_duration_spin.setSuffix(" s")
+        add_bleach_field(
+            bleach_row1, "Duration", self.bleach_duration_spin
+        )
+
+        self.bleach_nd_combo = QComboBox()
+
+        nd_config_path = (
+            Path(__file__).resolve().parents[3]
+            / "config"
+            / "nd_filters.json"
+        )
+
+        with nd_config_path.open(encoding="utf-8") as f:
+            nd_values = json.load(f)["nd_filters"]
+
+        for nd in nd_values:
+            self.bleach_nd_combo.addItem(f"{nd:.2f}", float(nd))
+
+        add_bleach_field(bleach_row1, "ND", self.bleach_nd_combo)
+
+        bleach_row1.addStretch()
+        bleaching_layout.addLayout(bleach_row1)
+
+        # --------------------------------------------------
+        # Second row: voltage, photon flux, pigment peak,
+        # and estimated bleach fraction
+        # --------------------------------------------------
+
+        bleach_row2 = QHBoxLayout()
+        bleach_row2.setSpacing(8)
+
+        self.bleach_voltage_spin = QDoubleSpinBox()
+        self.bleach_voltage_spin.setRange(0.02, 10.0)
+        self.bleach_voltage_spin.setDecimals(2)
+        self.bleach_voltage_spin.setSingleStep(0.1)
+        self.bleach_voltage_spin.setValue(1.0)
+        self.bleach_voltage_spin.setSuffix(" V")
+        add_bleach_field(
+            bleach_row2, "Voltage", self.bleach_voltage_spin
+        )
+
+        self.bleach_flux_label = QLabel("—")
+        self.bleach_flux_label.setMinimumWidth(75)
+        self.bleach_flux_label.setToolTip(
+            "Photon flux density at the specimen "
+            "(photons/µm²/s), after ND attenuation"
+        )
+        add_bleach_field(
+            bleach_row2, "Photon flux", self.bleach_flux_label
+        )
+
+        self.bleach_lambda_max_spin = QDoubleSpinBox()
+        self.bleach_lambda_max_spin.setRange(350.0, 700.0)
+        self.bleach_lambda_max_spin.setDecimals(0)
+        self.bleach_lambda_max_spin.setSingleStep(1.0)
+        self.bleach_lambda_max_spin.setValue(500.0)
+        self.bleach_lambda_max_spin.setSuffix(" nm")
+        add_bleach_field(
+            bleach_row2, "A1 λmax", self.bleach_lambda_max_spin
+        )
+
+        self.bleach_fraction_label = QLabel("—")
+        self.bleach_fraction_label.setMinimumWidth(50)
+        add_bleach_field(
+            bleach_row2, "Bleach (%)", self.bleach_fraction_label
+        )
+
+        bleach_row2.addStretch()
+        bleaching_layout.addLayout(bleach_row2)
+
+        # --------------------------------------------------
+        # Third row: Bleach execution
+        # --------------------------------------------------
+
+        bleach_row3 = QHBoxLayout()
+
+        self.bleach_button = QPushButton("Bleach")
+        self.bleach_button.setEnabled(False)
+
+        bleach_row3.addWidget(self.bleach_button)
+        self.bleach_button.clicked.connect(self.on_acquire_bleach)
+        bleaching_layout.addLayout(bleach_row3)
+        self.refresh_bleach_leds()
+
+        # --------------------------------------------------
+        # Prevent unnecessary horizontal expansion
+        # --------------------------------------------------
+
+        for widget in (
+            self.bleach_led_combo,
+            self.bleach_duration_spin,
+            self.bleach_nd_combo,
+            self.bleach_voltage_spin,
+            self.bleach_lambda_max_spin,
+        ):
+            widget.setSizePolicy(
+                QSizePolicy.Policy.Preferred,
+                QSizePolicy.Policy.Fixed,
+            )
 
         self.hardware_layout.addWidget(self.bleaching_group)
 
-        self.hardware_layout.addStretch()
+        # Update LED wavelengths when the calibration changes
+        self.calibration_combo.currentIndexChanged.connect(
+            self.refresh_bleach_leds
+        )
+        self.bleach_led_combo.currentIndexChanged.connect(
+            self.update_bleach_estimate
+        )
+        self.bleach_duration_spin.valueChanged.connect(
+            self.update_bleach_estimate
+        )
+        self.bleach_nd_combo.currentIndexChanged.connect(
+            self.update_bleach_estimate
+        )
+        self.bleach_voltage_spin.valueChanged.connect(
+            self.update_bleach_estimate
+        )
+        self.bleach_lambda_max_spin.valueChanged.connect(
+            self.update_bleach_estimate
+        )
+
+        self.calibration_combo.currentIndexChanged.connect(
+            self.update_bleach_estimate
+        )
+
+        self.calibration_combo.currentIndexChanged.connect(
+            self.update_bleach_voltage_range
+        )
+
+        # Initialize controls from the currently selected calibration.
+        self.update_bleach_voltage_range()
+        self.update_bleach_estimate()
 
         hardware_panel.setWidget(self.hardware_controls)
 
@@ -823,9 +1014,6 @@ class MSPMainWindow(QMainWindow):
         self.lower_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         messages_panel = QGroupBox("Messages / Log")
-        self.message_log = QPlainTextEdit()
-        self.message_log.setReadOnly(True)
-        self.message_log.setMaximumBlockCount(1000)
 
         scan_editor_panel = QGroupBox("Scan Metadata Editor")
         events_panel = QGroupBox("Experiment Events")
@@ -1166,13 +1354,31 @@ class MSPMainWindow(QMainWindow):
         )
 
     def update_acquisition_controls(self) -> None:
-        """Enable acquisition buttons when their requirements are met."""
+        """Enable acquisition controls when their requirements are met."""
 
         acquiring = self.acquisition_thread is not None
 
+        # Disable scan settings during acquisition.
         for widget in self.acquisition_settings:
             widget.setEnabled(not acquiring)
 
+        # Disable bleach settings during acquisition.
+        for widget in (
+            self.calibration_combo,
+            self.bleach_led_combo,
+            self.bleach_duration_spin,
+            self.bleach_nd_combo,
+            self.bleach_lambda_max_spin,
+        ):
+            widget.setEnabled(not acquiring)
+
+        # Analog voltage is only applicable to the analog LED.
+        self.bleach_voltage_spin.setEnabled(
+            not acquiring
+            and self.bleach_led_combo.currentData() == 1
+        )
+
+        # Manual hardware controls.
         manual_ready = (
             self.hardware_initialized
             and self.hardware_manager is not None
@@ -1183,14 +1389,17 @@ class MSPMainWindow(QMainWindow):
         for widget in self.manual_hardware_controls:
             widget.setEnabled(manual_ready)
 
+        # Baseline and bleach acquisition require an active experiment.
         ready = (
             self.controller.experiment is not None
             and self.hardware_initialized
-            and self.acquisition_thread is None
+            and not acquiring
         )
 
         self.acquire_baseline_button.setEnabled(ready)
+        self.bleach_button.setEnabled(ready)
 
+        # Scan acquisition additionally requires a compatible baseline.
         scan_ready = False
 
         if ready and self.active_baseline_index is not None:
@@ -1210,7 +1419,6 @@ class MSPMainWindow(QMainWindow):
                 pass
 
         self.load_protocol_action.setEnabled(not acquiring)
-        
         self.acquire_scan_button.setEnabled(scan_ready)
 
     def update_clocks(self) -> None:
@@ -1343,6 +1551,99 @@ class MSPMainWindow(QMainWindow):
                     self.calibration_combo.setCurrentIndex(index)
                     break
 
+    def on_acquire_bleach(self) -> None:
+        """Start a bleaching exposure in a worker thread."""
+
+        if (
+            not self.hardware_initialized
+            or self.controller.experiment is None
+            or self.controller.bleach_controller is None
+            or self.acquisition_thread is not None
+        ):
+            return
+
+        led_channel = self.bleach_led_combo.currentData()
+
+        try:
+            config = BleachWaveformConfig(
+                duration_s=self.bleach_duration_spin.value()
+            )
+
+            nd_filter = float(self.bleach_nd_combo.currentData())
+
+            command_voltage = (
+                self.bleach_voltage_spin.value()
+                if led_channel == 1
+                else None
+            )
+
+        except (TypeError, ValueError) as exc:
+            QMessageBox.warning(self, "Invalid bleach settings", str(exc))
+            return
+
+        self.acquisition_thread = QThread(self)
+
+        self.acquisition_worker = BleachAcquisitionWorker(
+            controller=self.controller,
+            led_channel=led_channel,
+            config=config,
+            nd_filter=nd_filter,
+            command_voltage=command_voltage,
+        )
+
+        self.acquisition_worker.moveToThread(self.acquisition_thread)
+
+        self.acquisition_thread.started.connect(self.acquisition_worker.run)
+
+        self.acquisition_worker.finished.connect(self.on_bleach_finished)
+        self.acquisition_worker.failed.connect(self.on_bleach_failed)
+
+        self.acquisition_worker.finished.connect(self.acquisition_thread.quit)
+        self.acquisition_worker.failed.connect(self.acquisition_thread.quit)
+
+        self.acquisition_worker.finished.connect(self.acquisition_worker.deleteLater)
+        self.acquisition_worker.failed.connect(self.acquisition_worker.deleteLater)
+
+        self.acquisition_thread.finished.connect(
+            self.on_acquisition_thread_finished
+        )
+        self.acquisition_thread.finished.connect(
+            self.acquisition_thread.deleteLater
+        )
+
+        self.update_acquisition_controls()
+
+        self.log_message(
+            f"Starting bleach: LED {led_channel}, "
+            f"{config.duration_s:g} s, ND {nd_filter:g}"
+        )
+
+        self.acquisition_thread.start()
+
+    @Slot(object)
+    def on_bleach_finished(self, bleach) -> None:
+        """Handle a completed bleaching exposure."""
+
+        self.log_message(
+            f"Bleach {bleach.bleach_index} completed successfully."
+        )
+
+        self.refresh_events_table()
+
+    @Slot(str)
+    def on_bleach_failed(self, message: str) -> None:
+        """Handle a failed bleaching exposure."""
+
+        self.log_message(f"Bleach failed: {message}")
+
+        self.refresh_events_table()
+
+        QMessageBox.critical(
+            self,
+            "Bleach failed",
+            message,
+        )
+
     def on_acquire_baseline(self) -> None:
         """Start baseline acquisition in a worker thread."""
 
@@ -1399,6 +1700,7 @@ class MSPMainWindow(QMainWindow):
         self.update_acquisition_controls()
         self.acquisition_thread.start()
 
+    @Slot(object)
     def on_baseline_acquired(self, baseline) -> None:
         """Display a successfully acquired baseline."""
 
@@ -1419,7 +1721,7 @@ class MSPMainWindow(QMainWindow):
         self.baseline_list.addItem(item)
         self.baseline_list.setCurrentItem(item)
 
-
+    @Slot(str)
     def on_baseline_failed(self, message: str) -> None:
         """Report an acquisition error."""
 
@@ -1508,6 +1810,7 @@ class MSPMainWindow(QMainWindow):
         self.update_acquisition_controls()
         self.acquisition_thread.start()
 
+    @Slot(object)
     def on_scan_acquired(self, scan) -> None:
         """Display a successfully acquired specimen scan."""
 
@@ -1553,6 +1856,7 @@ class MSPMainWindow(QMainWindow):
         self.show_legend_checkbox.setChecked(False)
         self.refresh_spectrum_plot()
 
+    @Slot(str)
     def on_scan_failed(self, message: str) -> None:
         """Report a specimen acquisition error."""
 
@@ -2032,6 +2336,7 @@ class MSPMainWindow(QMainWindow):
                     hardware_manager,
                     metadata_collector,
                     acquisition_controller,
+                    bleach_controller,
                 ) = create_hardware_manager()
 
                 hardware_manager.initialize()
@@ -2040,6 +2345,7 @@ class MSPMainWindow(QMainWindow):
                 self.hardware_manager = hardware_manager
                 self.controller.metadata_collector = metadata_collector
                 self.controller.acquisition = acquisition_controller
+                self.controller.bleach_controller = bleach_controller
 
             else:
                 self.hardware_manager.initialize()
@@ -2178,6 +2484,118 @@ class MSPMainWindow(QMainWindow):
 
         if dialog.calibration_saved:
             self.refresh_calibration_list()
+
+    def refresh_bleach_leds(self):
+        """Populate the bleach LED selector from the selected calibration."""
+
+        selected_channel = self.bleach_led_combo.currentData()
+
+        self.bleach_led_combo.clear()
+
+        calibration_file = self.calibration_combo.currentData()
+
+        if calibration_file is None:
+            self.bleach_led_combo.addItem("Analog", 1)
+            self.bleach_led_combo.addItem("Digital", 2)
+            return
+
+        try:
+            calibration = read_calibration(calibration_file)
+        except (OSError, KeyError, ValueError) as exc:
+            self.log_message(f"Unable to load light calibration: {exc}")
+            self.bleach_led_combo.addItem("Analog", 1)
+            self.bleach_led_combo.addItem("Digital", 2)
+            return
+
+        self.bleach_led_combo.addItem(
+            f"Analog ({calibration.analog_led.wavelength_nm:g} nm)",
+            calibration.analog_led.led_channel,
+        )
+
+        self.bleach_led_combo.addItem(
+            f"Digital ({calibration.digital_led.wavelength_nm:g} nm)",
+            calibration.digital_led.led_channel,
+        )
+
+        for index in range(self.bleach_led_combo.count()):
+            if self.bleach_led_combo.itemData(index) == selected_channel:
+                self.bleach_led_combo.setCurrentIndex(index)
+                break
+
+    def update_bleach_voltage_range(self):
+        """Set analog bleach voltage limits from the selected calibration."""
+
+        calibration_file = self.calibration_combo.currentData()
+
+        if calibration_file is None:
+            self.bleach_voltage_spin.setRange(0.02, 10.0)
+            return
+
+        try:
+            calibration = read_calibration(calibration_file)
+
+            voltages = calibration.analog_led.calibration_voltage
+
+            minimum = float(voltages.min())
+            maximum = float(voltages.max())
+
+            self.bleach_voltage_spin.setRange(minimum, maximum)
+
+        except (OSError, KeyError, ValueError) as exc:
+            self.log_message(
+                f"Unable to determine bleach voltage range: {exc}"
+            )
+            self.bleach_voltage_spin.setRange(0.02, 10.0)
+
+            
+    def update_bleach_estimate(self):
+        """Update photon flux density and estimated bleach fraction."""
+
+        self.bleach_flux_label.setText("—")
+        self.bleach_fraction_label.setText("—")
+
+        led_channel = self.bleach_led_combo.currentData()
+
+        # Analog LED requires a voltage; digital LED is on/off.
+        is_analog = led_channel == 1
+        self.bleach_voltage_spin.setEnabled(
+            is_analog and self.acquisition_thread is None
+        )
+
+        calibration_file = self.calibration_combo.currentData()
+        if calibration_file is None:
+            return
+
+        try:
+            calibration = read_calibration(calibration_file)
+
+            if is_analog:
+                led_calibration = calibration.analog_led
+                command_voltage = self.bleach_voltage_spin.value()
+            elif led_channel == 2:
+                led_calibration = calibration.digital_led
+                command_voltage = None
+            else:
+                return
+
+            estimate = estimate_bleach(
+                calibration=led_calibration,
+                duration_s=self.bleach_duration_spin.value(),
+                nd_filter=self.bleach_nd_combo.currentData(),
+                lambda_max_nm=self.bleach_lambda_max_spin.value(),
+                command_voltage=command_voltage,
+            )
+
+        except (OSError, KeyError, ValueError) as exc:
+            self.log_message(f"Unable to calculate bleach estimate: {exc}")
+            return
+
+        self.bleach_flux_label.setText(
+            f"{estimate.photon_flux_density:.2e}"
+        )
+        self.bleach_fraction_label.setText(
+            f"{100.0 * estimate.fraction_bleached:.1f}%"
+        )
 
     def refresh_spectrum_plot(self, auto_range=True):
         """Update displayed spectra and optionally reset the plot range."""
@@ -2323,7 +2741,14 @@ def create_hardware_manager() -> tuple[
         optoscan=optoscan,
     )
 
-    return hardware_manager, metadata_collector, acquisition_controller
+    bleach_controller = BleachController(daq=daq)
+
+    return (
+        hardware_manager,
+        metadata_collector,
+        acquisition_controller,
+        bleach_controller,
+    )
 
 
 def main():

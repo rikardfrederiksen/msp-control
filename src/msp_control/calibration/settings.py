@@ -3,7 +3,6 @@
 import json
 from pathlib import Path
 
-
 def calibration_directory() -> Path:
     """Return the directory containing saved LED calibrations."""
     return Path(__file__).resolve().parents[3] / "config" / "calibrations"

@@ -219,3 +219,7 @@ __marimo__/
 
 # Local experimental data
 data/
+
+# Local instrument calibration data and preferences
+/config/calibrations/
+/config/calibration_settings.json
