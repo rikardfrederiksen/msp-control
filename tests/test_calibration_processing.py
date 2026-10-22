@@ -193,3 +193,28 @@ def test_process_digital_calibration():
     )
 
     assert np.isclose(flux_on, expected_flux)
+
+
+from msp_control.calibration.processing import combine_analog_ramps
+
+
+def test_combine_analog_ramps():
+    """Verify averaging of ascending and descending calibration ramps."""
+
+    from msp_control.calibration.processing import AnalogCalibrationRamps
+
+    ramps = AnalogCalibrationRamps(
+        voltage_up=np.array([0.0, 1.0, 2.0, 3.0]),
+        monitor_up=np.array([0.0, 1.0, 2.0, 3.0]),
+        flux_up=np.array([0.0, 10.0, 20.0, 30.0]),
+        voltage_down=np.array([3.0, 2.0, 1.0, 0.0]),
+        monitor_down=np.array([3.6, 2.4, 1.2, 0.0]),
+        flux_down=np.array([36.0, 24.0, 12.0, 0.0]),
+        dark_voltage=0.05,
+    )
+
+    voltage, monitor, flux = combine_analog_ramps(ramps)
+
+    np.testing.assert_allclose(voltage, [0, 1, 2, 3])
+    np.testing.assert_allclose(monitor, [0, 1.1, 2.2, 3.3])
+    np.testing.assert_allclose(flux, [0, 11, 22, 33])

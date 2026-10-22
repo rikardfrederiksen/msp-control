@@ -49,6 +49,18 @@ def write_calibration(
             "photodiode_voltage", data=analog.photodiode_voltage
         )
 
+        if analog.monitor_voltage_sd is not None:
+            raw.create_dataset(
+                "monitor_voltage_sd",
+                data=analog.monitor_voltage_sd,
+            )
+
+        if analog.photodiode_voltage_sd is not None:
+            raw.create_dataset(
+                "photodiode_voltage_sd",
+                data=analog.photodiode_voltage_sd,
+            )
+        
         processed = group.create_group("calibration")
         processed.create_dataset(
             "command_voltage", data=analog.calibration_voltage
@@ -80,6 +92,18 @@ def write_calibration(
             "photodiode_voltage", data=digital.photodiode_voltage
         )
 
+        if digital.monitor_voltage_sd is not None:
+            raw.create_dataset(
+                "monitor_voltage_sd",
+                data=digital.monitor_voltage_sd,
+            )
+
+        if digital.photodiode_voltage_sd is not None:
+            raw.create_dataset(
+                "photodiode_voltage_sd",
+                data=digital.photodiode_voltage_sd,
+            )
+
         processed = group.create_group("calibration")
         processed.attrs["monitor_voltage_on"] = (
             digital.monitor_voltage_on
@@ -102,6 +126,7 @@ def _write_led_attributes(group, led) -> None:
     group.attrs["illuminated_area_um2"] = (
         led.illuminated_area_um2
     )
+    group.attrs["n_repeats"] = led.n_repeats
 
 
 def read_calibration(
@@ -139,6 +164,17 @@ def read_calibration(
             calibration_voltage=analog_processed["command_voltage"][:],
             calibration_monitor_voltage=analog_processed["monitor_voltage"][:],
             photon_flux_density=analog_processed["photon_flux_density"][:],
+            n_repeats=int(analog_group.attrs.get("n_repeats", 1)),
+            monitor_voltage_sd=(
+                analog_raw["monitor_voltage_sd"][:]
+                if "monitor_voltage_sd" in analog_raw
+                else None
+            ),
+            photodiode_voltage_sd=(
+                analog_raw["photodiode_voltage_sd"][:]
+                if "photodiode_voltage_sd" in analog_raw
+                else None
+            ),
         )
 
         digital_group = h5["digital_led"]
@@ -165,6 +201,17 @@ def read_calibration(
             ),
             photon_flux_density_on=float(
                 digital_processed.attrs["photon_flux_density_on"]
+            ),
+            n_repeats=int(digital_group.attrs.get("n_repeats", 1)),
+            monitor_voltage_sd=(
+                digital_raw["monitor_voltage_sd"][:]
+                if "monitor_voltage_sd" in digital_raw
+                else None
+            ),
+            photodiode_voltage_sd=(
+                digital_raw["photodiode_voltage_sd"][:]
+                if "photodiode_voltage_sd" in digital_raw
+                else None
             ),
         )
 

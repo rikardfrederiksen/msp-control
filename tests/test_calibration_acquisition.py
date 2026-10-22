@@ -198,3 +198,66 @@ def test_acquire_digital_failure_cleanup():
 
     daq.stop_bleach_digital_output.assert_called_once()
     daq.close.assert_called_once()
+
+
+def test_sequential_analog_digital_acquisitions():
+    """The same DAQ can be used for successive LED calibrations."""
+
+    daq = Mock()
+    controller = CalibrationController(daq)
+
+    analog_config = CalibrationWaveformConfig(
+        dark_before_s=0.1,
+        ramp_up_s=0.2,
+        hold_s=0.1,
+        ramp_down_s=0.2,
+        dark_after_s=0.1,
+        sample_rate_hz=100.0,
+    )
+
+    digital_config = BleachWaveformConfig(
+        duration_s=0.5,
+        pre_dark_s=0.1,
+        post_dark_s=0.1,
+        sample_rate_hz=100.0,
+    )
+
+    # Both waveforms contain 70 samples.
+    daq.read_bleach_monitor.return_value = np.zeros((2, 70))
+
+    controller.acquire_analog(analog_config)
+    controller.acquire_digital(digital_config)
+
+    # Both acquisitions use the same DAQ instance.
+    assert daq.configure_bleach_analog_output.call_count == 1
+    assert daq.configure_bleach_digital_output.call_count == 1
+
+    # Each acquisition performs its own cleanup.
+    daq.stop_bleach_analog_output.assert_called_once()
+    daq.stop_bleach_digital_output.assert_called_once()
+    assert daq.close.call_count == 2
+
+    # Verify that analog cleanup completes before digital configuration.
+    calls = [c[0] for c in daq.mock_calls]
+
+    assert calls.index("stop_bleach_analog_output") < calls.index(
+        "configure_bleach_digital_output"
+    )
+
+    # Verify that each acquisition closes the DAQ after stopping its output.
+    assert calls == [
+        "configure_bleach_analog_output",
+        "configure_bleach_monitor",
+        "start_bleach_tasks",
+        "read_bleach_monitor",
+        "wait_for_bleach_output",
+        "stop_bleach_analog_output",
+        "close",
+        "configure_bleach_digital_output",
+        "configure_bleach_monitor",
+        "start_bleach_tasks",
+        "read_bleach_monitor",
+        "wait_for_bleach_output",
+        "stop_bleach_digital_output",
+        "close",
+    ]

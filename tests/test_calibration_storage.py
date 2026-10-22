@@ -12,8 +12,9 @@ from msp_control.calibration.model import (
 from msp_control.calibration.storage import write_calibration, read_calibration
 
 
-def test_write_calibration(tmp_path):
-    """Verify calibration HDF5 structure and overwrite protection."""
+@pytest.fixture
+def test_calibration():
+    """Construct a valid light calibration for storage tests."""
 
     analog = AnalogLEDCalibration(
         led_channel=1,
@@ -46,16 +47,19 @@ def test_write_calibration(tmp_path):
         photon_flux_density_on=4e6,
     )
 
-    calibration = LightCalibration(
+    return LightCalibration(
         calibration_id="test-calibration",
         created_at=datetime(2026, 10, 20, 12, 0),
         analog_led=analog,
         digital_led=digital,
     )
 
+def test_write_calibration(tmp_path, test_calibration):
+    """Verify calibration HDF5 structure and overwrite protection."""
+
     filename = tmp_path / "test_calibration.h5"
 
-    write_calibration(filename, calibration)
+    write_calibration(filename, test_calibration)
 
     with h5py.File(filename, "r") as h5:
         assert h5.attrs["format_name"] == "msp-light-calibration"
@@ -70,37 +74,37 @@ def test_write_calibration(tmp_path):
 
         np.testing.assert_array_equal(
             h5["analog_led/raw/command_voltage"][:],
-            analog.command_voltage,
+            test_calibration.analog_led.command_voltage,
         )
 
         np.testing.assert_array_equal(
             h5["analog_led/calibration/photon_flux_density"][:],
-            analog.photon_flux_density,
+             test_calibration.analog_led.photon_flux_density,
         )
 
         np.testing.assert_array_equal(
             h5["digital_led/raw/command_state"][:],
-            digital.command_state,
+             test_calibration.digital_led.command_state,
         )
 
         assert (
             h5["digital_led/calibration"].attrs["photon_flux_density_on"]
-            == digital.photon_flux_density_on
+            ==  test_calibration.digital_led.photon_flux_density_on
         )
 
     # Existing calibration files must never be overwritten.
     with pytest.raises(FileExistsError):
-        write_calibration(filename, calibration)
+        write_calibration(filename, test_calibration)
 
     # Verify complete write/read round trip.
     loaded = read_calibration(filename)
 
-    assert loaded.calibration_id == calibration.calibration_id
-    assert loaded.created_at == calibration.created_at
+    assert loaded.calibration_id == test_calibration.calibration_id
+    assert loaded.created_at == test_calibration.created_at
 
     for original, restored in (
-        (calibration.analog_led, loaded.analog_led),
-        (calibration.digital_led, loaded.digital_led),
+        (test_calibration.analog_led, loaded.analog_led),
+        (test_calibration.digital_led, loaded.digital_led),
     ):
         for field_name in original.__dataclass_fields__:
             expected = getattr(original, field_name)
@@ -192,3 +196,101 @@ def test_invalid_digital_calibration(field, value):
 
     with pytest.raises(ValueError):
         DigitalLEDCalibration(**data)
+
+
+def test_repeated_calibration_roundtrip(tmp_path, test_calibration):
+    """Repeated-measurement metadata and SD arrays survive HDF5 storage."""
+
+    from dataclasses import replace
+    import numpy as np
+
+    from msp_control.calibration.model import LightCalibration
+
+    calibration = test_calibration
+
+    analog = replace(
+        calibration.analog_led,
+        n_repeats=5,
+        monitor_voltage_sd=np.full_like(
+            calibration.analog_led.monitor_voltage, 0.02
+        ),
+        photodiode_voltage_sd=np.full_like(
+            calibration.analog_led.photodiode_voltage, 0.01
+        ),
+    )
+
+    digital = replace(
+        calibration.digital_led,
+        n_repeats=3,
+        monitor_voltage_sd=np.full_like(
+            calibration.digital_led.monitor_voltage, 0.03
+        ),
+        photodiode_voltage_sd=np.full_like(
+            calibration.digital_led.photodiode_voltage, 0.015
+        ),
+    )
+
+    repeated = replace(
+        calibration,
+        analog_led=analog,
+        digital_led=digital,
+    )
+
+    filename = tmp_path / "repeated_calibration.h5"
+
+    write_calibration(filename, repeated)
+    loaded = read_calibration(filename)
+
+    assert loaded.analog_led.n_repeats == 5
+    assert loaded.digital_led.n_repeats == 3
+
+    np.testing.assert_array_equal(
+        loaded.analog_led.monitor_voltage_sd,
+        analog.monitor_voltage_sd,
+    )
+    np.testing.assert_array_equal(
+        loaded.analog_led.photodiode_voltage_sd,
+        analog.photodiode_voltage_sd,
+    )
+    np.testing.assert_array_equal(
+        loaded.digital_led.monitor_voltage_sd,
+        digital.monitor_voltage_sd,
+    )
+    np.testing.assert_array_equal(
+        loaded.digital_led.photodiode_voltage_sd,
+        digital.photodiode_voltage_sd,
+    )
+
+
+def test_read_calibration_without_repeat_metadata(
+    tmp_path, test_calibration
+):
+    """Older calibration files without repeat metadata remain readable."""
+
+    filename = tmp_path / "legacy_calibration.h5"
+
+    write_calibration(filename, test_calibration)
+
+    # Simulate a calibration file created before repeat metadata existed.
+    with h5py.File(filename, "r+") as h5:
+        for led_name in ("analog_led", "digital_led"):
+            group = h5[led_name]
+
+            if "n_repeats" in group.attrs:
+                del group.attrs["n_repeats"]
+
+            raw = group["raw"]
+
+            for dataset in (
+                "monitor_voltage_sd",
+                "photodiode_voltage_sd",
+            ):
+                if dataset in raw:
+                    del raw[dataset]
+
+    loaded = read_calibration(filename)
+
+    for led in (loaded.analog_led, loaded.digital_led):
+        assert led.n_repeats == 1
+        assert led.monitor_voltage_sd is None
+        assert led.photodiode_voltage_sd is None

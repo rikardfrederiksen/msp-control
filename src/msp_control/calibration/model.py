@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 import numpy as np
@@ -24,6 +24,10 @@ class AnalogLEDCalibration:
     calibration_voltage: np.ndarray
     calibration_monitor_voltage: np.ndarray
     photon_flux_density: np.ndarray
+
+    n_repeats: int = 1
+    monitor_voltage_sd: np.ndarray | None = None
+    photodiode_voltage_sd: np.ndarray | None = None
 
     def __post_init__(self):
         """Validate the analog LED calibration data."""
@@ -88,6 +92,23 @@ class AnalogLEDCalibration:
                 "Photodiode responsivity must be positive and finite"
             )
 
+        if self.n_repeats < 1:
+            raise ValueError("n_repeats must be at least 1")
+
+        for name in ("monitor_voltage_sd", "photodiode_voltage_sd"):
+            sd = getattr(self, name)
+
+            if sd is None:
+                continue
+
+            mean = getattr(self, name.removesuffix("_sd"))
+
+            if sd.shape != mean.shape:
+                raise ValueError(f"{name} must match the corresponding voltage trace")
+
+            if not np.all(np.isfinite(sd)) or np.any(sd < 0):
+                raise ValueError(f"{name} must contain finite, nonnegative values")
+
 
 @dataclass
 class DigitalLEDCalibration:
@@ -108,6 +129,10 @@ class DigitalLEDCalibration:
 
     monitor_voltage_on: float
     photon_flux_density_on: float
+
+    n_repeats: int = 1
+    monitor_voltage_sd: np.ndarray | None = None
+    photodiode_voltage_sd: np.ndarray | None = None
 
 
     def __post_init__(self):
@@ -169,6 +194,23 @@ class DigitalLEDCalibration:
             raise ValueError(
                 "Photodiode responsivity must be positive and finite"
             )
+
+        if self.n_repeats < 1:
+            raise ValueError("n_repeats must be at least 1")
+
+        for name in ("monitor_voltage_sd", "photodiode_voltage_sd"):
+            sd = getattr(self, name)
+
+            if sd is None:
+                continue
+
+            mean = getattr(self, name.removesuffix("_sd"))
+
+            if sd.shape != mean.shape:
+                raise ValueError(f"{name} must match the corresponding voltage trace")
+
+            if not np.all(np.isfinite(sd)) or np.any(sd < 0):
+                raise ValueError(f"{name} must contain finite, nonnegative values")
 
 
 @dataclass

@@ -194,3 +194,49 @@ def process_digital_calibration(
         )
 
     return monitor_voltage_on, photon_flux_density_on
+
+def combine_analog_ramps(
+    ramps: AnalogCalibrationRamps,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Combine ascending and descending calibration ramps.
+
+    Returns
+    -------
+    voltage : np.ndarray
+        Increasing LED command voltages.
+    monitor_voltage : np.ndarray
+        Mean LED monitor voltage.
+    photon_flux_density : np.ndarray
+        Mean photon flux density.
+    """
+
+    voltage = ramps.voltage_up.copy()
+
+    # Descending measurements in increasing voltage order.
+    voltage_down = ramps.voltage_down[::-1]
+    monitor_down = ramps.monitor_down[::-1]
+    flux_down = ramps.flux_down[::-1]
+
+    # Interpolate descending measurements onto ascending voltage grid.
+    monitor_down_interp = np.interp(
+        voltage,
+        voltage_down,
+        monitor_down,
+    )
+
+    flux_down_interp = np.interp(
+        voltage,
+        voltage_down,
+        flux_down,
+    )
+
+    monitor_voltage = (
+        ramps.monitor_up + monitor_down_interp
+    ) / 2
+
+    photon_flux_density = (
+        ramps.flux_up + flux_down_interp
+    ) / 2
+
+    return voltage, monitor_voltage, photon_flux_density
