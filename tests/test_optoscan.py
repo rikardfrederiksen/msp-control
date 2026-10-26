@@ -349,6 +349,15 @@ def test_close_exits_diagnostic_mode_before_closing_serial():
     assert not fake_serial.is_open
     assert optoscan._serial is None
 
+    assert optoscan._in_diagnostic_mode is False
+
+    # Closing again must not send another command.
+    optoscan.close()
+
+    assert fake_serial.written == b"menu\n"
+    assert not fake_serial.is_open
+    assert optoscan._serial is None
+
 
 def test_close_releases_serial_after_diagnostic_timeout():
     optoscan = OptoscanSerial(port="/dev/null")
@@ -369,3 +378,26 @@ def test_close_releases_serial_after_diagnostic_timeout():
     assert not fake_serial.is_open
     assert optoscan._serial is None
     assert optoscan._in_diagnostic_mode is False
+
+
+def test_close_is_idempotent():
+    """Closing twice must not repeat serial operations."""
+
+    optoscan = OptoscanSerial("COM2")
+    fake_serial = Mock()
+    fake_serial.is_open = True
+
+    optoscan._serial = fake_serial
+    optoscan._in_diagnostic_mode = False
+
+    optoscan.close()
+
+    fake_serial.close.assert_called_once_with()
+    assert optoscan._serial is None
+    assert not optoscan._in_diagnostic_mode
+
+    # A second close should do nothing.
+    optoscan.close()
+
+    fake_serial.close.assert_called_once_with()
+    fake_serial.write.assert_not_called()
