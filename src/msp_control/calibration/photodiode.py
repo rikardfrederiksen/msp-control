@@ -22,7 +22,7 @@ def voltage_to_current(
     """Convert dark-subtracted PDA200C output voltage to current (A)."""
 
     gain = PDA200C_GAINS[range_label]
-    return (np.asarray(voltage) - dark_voltage) / gain
+    return (dark_voltage - np.asarray(voltage)) / gain
 
 def responsivity_at_wavelength(wavelength_nm: float) -> float:
     """

@@ -205,7 +205,16 @@ class MSPMainWindow(QMainWindow):
         self.acquisition_worker = None
 
         self.setWindowTitle("MSP Control")
-        self.resize(2400, 1600)
+        
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            self.resize(
+                min(1600, int(available.width() * 0.95)),
+                min(900, int(available.height() * 0.95)),
+            )
+        else:
+            self.resize(1600, 900)
 
         self.controller = MSPController()
         self.experiment = None
@@ -332,7 +341,7 @@ class MSPMainWindow(QMainWindow):
 
         self.scan_list = QListWidget()
         self.scan_list.setMinimumWidth(120)
-        self.scan_list.setMinimumHeight(800)
+        self.scan_list.setMinimumHeight(200)
 
         self.scan_curves = {}
 

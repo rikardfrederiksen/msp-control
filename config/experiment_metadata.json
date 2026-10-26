@@ -29,6 +29,18 @@
       "genotypes": {
         "WT": "Wild type"
       }
+    },
+      "hagfish": {
+       "label": "Pacific hagfish (Eptatretus stoutii)",
+       "genotypes": {
+        "WT": "Wild type"
+      }
+    },
+    "lamprey": {
+      "label": "Sea lamprey (Petromyzon marinus)",
+      "genotypes": {
+          "WT": "Wilde type"
+      }
     }
   },
   "preparations": {
@@ -43,6 +55,11 @@
     "unknown": "Unknown"
   },
   "experimenters": {
-    "RF": "Rikard Frederiksen"
+      "RF": "Rikard",
+      "CM": "Chris",
+      "AT": "Annabelle",
+      "KK": "Kyle",
+      "NS": "Noah",
+      "SI": "Sanjana"
   }
 }
