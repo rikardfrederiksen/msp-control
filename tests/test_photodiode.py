@@ -28,7 +28,7 @@ def test_voltage_to_current():
     # PDA200C set to nA 2 (10^7 V/A).
     # A 0.5 V output corresponds to 50 nA.
     current = voltage_to_current(
-        voltage=0.5,
+        voltage=-0.5,
         range_label="nA 2",
     )
 
@@ -42,7 +42,7 @@ def test_voltage_to_current_with_dark_baseline():
     # Net photocurrent: 50 nA
 
     current = voltage_to_current(
-        voltage=0.52,
+        voltage=-0.48,
         range_label="nA 2",
         dark_voltage=0.02,
     )

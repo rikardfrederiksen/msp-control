@@ -33,7 +33,7 @@ def test_process_analog_calibration():
     time_s, command_voltage = generate_calibration_waveform(config)
 
     # Simulate a photodiode signal proportional to command voltage.
-    photodiode_voltage = dark_voltage + 0.1 * command_voltage
+    photodiode_voltage = dark_voltage - 0.1 * command_voltage
 
     raw = RawCalibrationAcquisition(
         time_s=time_s,
@@ -115,11 +115,11 @@ def test_analog_calibration_preserves_hysteresis():
     time_s, command_voltage = generate_calibration_waveform(config)
 
     # Simulate a different photodiode response during ramp-down.
-    photodiode_voltage = 0.05 + 0.1 * command_voltage
+    photodiode_voltage = 0.05 - 0.1 * command_voltage
 
     # Ramp-down occupies samples 40:60.
     photodiode_voltage[40:60] = (
-        0.05 + 0.12 * command_voltage[40:60]
+        0.05 - 0.12 * command_voltage[40:60]
     )
 
     raw = RawCalibrationAcquisition(
@@ -166,9 +166,9 @@ def test_process_digital_calibration():
         monitor_voltage=np.array(
             [0.0, 0.0, 2.0, 2.1, 1.9, 0.0, 0.0]
         ),
-        photodiode_voltage=np.array(
-            [0.05, 0.05, 0.55, 0.55, 0.55, 0.05, 0.05]
-        ),
+       photodiode_voltage=np.array(
+           [0.05, 0.05, -0.45, -0.45, -0.45, 0.05, 0.05]
+       ),
     )
 
     monitor_on, flux_on = process_digital_calibration(

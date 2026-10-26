@@ -20,6 +20,9 @@ class FakeSerial:
     def flush(self):
         self.flushed = True
 
+    def close(self):
+        self.is_open = False
+
     def reset_input_buffer(self):
         self.input_buffer_reset = True
 
@@ -328,3 +331,41 @@ def test_manual_slit_control():
     optoscan.close_slits()
 
     optoscan.send_command.assert_called_once_with("close_slits")
+
+
+def test_close_exits_diagnostic_mode_before_closing_serial():
+    optoscan = OptoscanSerial(port="/dev/null")
+    fake_serial = FakeSerial(
+        responses=[b"menu \x1b\x1b"]
+    )
+    optoscan._serial = fake_serial
+
+    # Simulate a successfully initialized controller.
+    optoscan._in_diagnostic_mode = True
+
+    optoscan.close()
+
+    assert fake_serial.written == b"menu\n"
+    assert not fake_serial.is_open
+    assert optoscan._serial is None
+
+
+def test_close_releases_serial_after_diagnostic_timeout():
+    optoscan = OptoscanSerial(port="/dev/null")
+    fake_serial = FakeSerial()
+    optoscan._serial = fake_serial
+    optoscan._in_diagnostic_mode = True
+
+    # Simulate an unresponsive controller without waiting for a real timeout.
+    from unittest.mock import patch
+
+    with patch.object(
+        optoscan,
+        "exit_diagnostic_mode",
+        side_effect=TimeoutError("Controller did not respond"),
+    ):
+        optoscan.close()
+
+    assert not fake_serial.is_open
+    assert optoscan._serial is None
+    assert optoscan._in_diagnostic_mode is False

@@ -40,7 +40,7 @@ def test_light_calibration_round_trip(tmp_path):
         time_s=analog_time,
         command_voltage=analog_command,
         monitor_voltage=0.2 * analog_command,
-        photodiode_voltage=0.05 + 0.1 * analog_command,
+        photodiode_voltage=0.05 - 0.1 * analog_command,
     )
 
     digital_config = BleachWaveformConfig(
@@ -60,7 +60,7 @@ def test_light_calibration_round_trip(tmp_path):
         time_s=digital_time,
         command_state=digital_state,
         monitor_voltage=2.0 * digital_state.astype(float),
-        photodiode_voltage=0.05 + 0.5 * digital_state.astype(float),
+        photodiode_voltage=0.05 - 0.5 * digital_state.astype(float),
     )
 
     created_at = datetime(2026, 10, 21, 12, 0, 0)

@@ -55,14 +55,14 @@ def test_light_calibration_workflow():
         time_s=analog_time,
         command_voltage=analog_command,
         monitor_voltage=0.2 * analog_command,
-        photodiode_voltage=0.05 + 0.1 * analog_command,
+        photodiode_voltage=0.05 - 0.1 * analog_command,
     )
 
     controller.acquire_digital.return_value = RawDigitalCalibrationAcquisition(
         time_s=digital_time,
         command_state=digital_command,
         monitor_voltage=2.0 * digital_command.astype(float),
-        photodiode_voltage=0.05 + 0.5 * digital_command.astype(float),
+        photodiode_voltage=0.05 - 0.5 * digital_command.astype(float),
     )
 
     config = LightCalibrationConfig(
@@ -174,7 +174,7 @@ def test_light_calibration_workflow_repeated_acquisitions():
             time_s=analog_time,
             command_voltage=analog_command,
             monitor_voltage=0.2 * analog_command + offset,
-            photodiode_voltage=0.05 + 0.1 * analog_command + offset,
+            photodiode_voltage=0.05 - 0.1 * analog_command + offset,
         )
         for offset in (0.0, 0.01, 0.02)
     ]
@@ -185,7 +185,7 @@ def test_light_calibration_workflow_repeated_acquisitions():
             time_s=digital_time,
             command_state=digital_command,
             monitor_voltage=2.0 * digital_command.astype(float) + offset,
-            photodiode_voltage=0.05 + 0.5 * digital_command.astype(float) + offset,
+            photodiode_voltage=0.05 - 0.5 * digital_command.astype(float) + offset,
         )
         for offset in (0.0, 0.02)
     ]
@@ -244,7 +244,7 @@ def test_light_calibration_workflow_repeated_acquisitions():
 
     np.testing.assert_allclose(
         analog.photodiode_voltage,
-        0.05 + 0.1 * analog_command + 0.01,
+        0.05 - 0.1 * analog_command + 0.01,
     )
 
     # Three offsets: 0, 0.01, 0.02 -> sample SD = 0.01.
@@ -266,7 +266,7 @@ def test_light_calibration_workflow_repeated_acquisitions():
 
     np.testing.assert_allclose(
         digital.photodiode_voltage,
-        0.05 + 0.5 * digital_command.astype(float) + 0.01,
+        0.05 - 0.5 * digital_command.astype(float) + 0.01,
     )
 
     # Two offsets: 0, 0.02 -> sample SD = 0.02 / sqrt(2).
