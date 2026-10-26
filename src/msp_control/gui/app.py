@@ -1179,7 +1179,7 @@ class MSPMainWindow(QMainWindow):
         self.log_message("MSP Control started")
 
     def closeEvent(self, event):
-        """Prevent closing the application during acquisition."""
+        """Safely disconnect hardware when closing the application."""
 
         if self.acquisition_thread is not None:
             QMessageBox.warning(
@@ -1189,6 +1189,12 @@ class MSPMainWindow(QMainWindow):
             )
             event.ignore()
             return
+
+        if self.hardware_manager is not None:
+            try:
+                self.hardware_manager.disconnect()
+            except Exception as exc:
+                self.log_message(f"Hardware shutdown error: {exc}")
 
         super().closeEvent(event)
 

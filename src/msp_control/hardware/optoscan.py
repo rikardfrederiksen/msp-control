@@ -19,6 +19,7 @@ class OptoscanSerial:
         self.baudrate = baudrate
         self.timeout = timeout
         self._serial = None
+        self._in_diagnostic_mode = False
 
     def initialize(self) -> None:
         """Open or reinitialize the Optoscan serial connection."""
@@ -55,10 +56,24 @@ class OptoscanSerial:
         )
 
     def close(self) -> None:
-        """Close the serial connection."""
-        if self._serial is not None:
-            self._serial.close()
-            self._serial = None
+        """Exit diagnostic mode and close the serial connection."""
+
+        if self._serial is None:
+            return
+
+        try:
+            if self.is_open and self._in_diagnostic_mode:
+                try:
+                    self.exit_diagnostic_mode()
+                except (TimeoutError, serial.SerialException, OSError):
+                    # Release the port even if the controller does not respond.
+                    pass
+        finally:
+            try:
+                self._serial.close()
+            finally:
+                self._serial = None
+                self._in_diagnostic_mode = False
 
     @property
     def is_open(self) -> bool:
@@ -103,6 +118,7 @@ class OptoscanSerial:
         self._serial.write(b"9")
         self._serial.flush()
         self._read_until(b"\r\n")
+        self._in_diagnostic_mode = True
 
     def exit_diagnostic_mode(self) -> None:
         """Exit the diagnostic/Forth interface and return to the main menu."""
@@ -114,6 +130,7 @@ class OptoscanSerial:
         self._serial.flush()
 
         self._read_until(b"\x1b\x1b")
+        self._in_diagnostic_mode = False
 
     def send_command(self, command: str) -> str:
         """Send one command to the Optoscan and return its response."""
