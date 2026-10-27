@@ -82,7 +82,7 @@ class CalibrationDialog(QDialog):
         self.acquisition_worker = None
         self.calibration_saved = False
         self.setWindowTitle("Light Calibration")
-        self.resize(1000, 1200)
+        self.resize(800, 800)
 
         layout = QVBoxLayout(self)
 

@@ -73,6 +73,7 @@ from msp_control.calibration.storage import read_calibration
 from msp_control.calibration.bleach import estimate_bleach
 from msp_control.bleach import BleachController
 from msp_control.calibration.waveform import BleachWaveformConfig
+from msp_control.gui.data_directory import experiment_directory
 
 
 SCAN_COLORS = [
@@ -200,6 +201,8 @@ class MSPMainWindow(QMainWindow):
 
         self.hardware_manager = hardware_manager
         self.hardware_initialized = False
+
+        self.data_root = Path("D:/") if sys.platform == "win32" else Path.home() / "tmp"
 
         self.acquisition_thread = None
         self.acquisition_worker = None
@@ -635,11 +638,11 @@ class MSPMainWindow(QMainWindow):
 
         self.baseline_scans_spin = QSpinBox()
         self.baseline_scans_spin.setRange(1, 100)
-        self.baseline_scans_spin.setValue(20)
+        self.baseline_scans_spin.setValue(10)
 
         self.specimen_scans_spin = QSpinBox()
         self.specimen_scans_spin.setRange(1, 100)
-        self.specimen_scans_spin.setValue(3)
+        self.specimen_scans_spin.setValue(10)
 
         scan_config_layout.addRow("Start wavelength:", self.start_nm_spin)
         scan_config_layout.addRow("End wavelength:", self.end_nm_spin)
@@ -2100,10 +2103,16 @@ class MSPMainWindow(QMainWindow):
 
         metadata = dialog.get_metadata()
 
+        start_directory = experiment_directory(
+            self.data_root,
+            metadata["experimenter"],
+            self.metadata_registry["experimenters"],
+        )
+
         filename, _ = QFileDialog.getSaveFileName(
             self,
             "Create New Experiment",
-            "data/",
+            str(start_directory),
             "MSP Experiment (*.h5)",
         )
 
@@ -2241,7 +2250,7 @@ class MSPMainWindow(QMainWindow):
         filename, _ = QFileDialog.getOpenFileName(
             self,
             "Open Experiment",
-            "data/",
+            str(self.data_root),
             "MSP Experiment (*.h5)",
         )
 
