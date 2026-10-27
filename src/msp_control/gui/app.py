@@ -74,6 +74,7 @@ from msp_control.calibration.bleach import estimate_bleach
 from msp_control.bleach import BleachController
 from msp_control.calibration.waveform import BleachWaveformConfig
 from msp_control.gui.data_directory import experiment_directory
+from msp_control.paths import config_directory
 
 
 SCAN_COLORS = [
@@ -93,11 +94,7 @@ SCAN_COLORS = [
 def load_cell_types() -> list[str]:
     """Load the available cell types from the project configuration."""
 
-    config_path = (
-        Path(__file__).resolve().parents[3]
-        / "config"
-        / "cell_types.json"
-    )
+    config_path = config_directory() / "cell_types.json"
 
     with config_path.open("r", encoding="utf-8") as f:
         config = json.load(f)
@@ -228,7 +225,7 @@ class MSPMainWindow(QMainWindow):
 
         # Load the controlled metadata vocabulary
         self.metadata_registry = load_metadata_registry(
-            "config/experiment_metadata.json"
+            config_directory() / "experiment_metadata.json"
         )
 
         # File menu
@@ -874,11 +871,7 @@ class MSPMainWindow(QMainWindow):
 
         self.bleach_nd_combo = QComboBox()
 
-        nd_config_path = (
-            Path(__file__).resolve().parents[3]
-            / "config"
-            / "nd_filters.json"
-        )
+        nd_config_path = config_directory() / "nd_filters.json"
 
         with nd_config_path.open(encoding="utf-8") as f:
             nd_values = json.load(f)["nd_filters"]
@@ -2273,7 +2266,7 @@ class MSPMainWindow(QMainWindow):
         filename, _ = QFileDialog.getOpenFileName(
             self,
             "Load Acquisition Protocol",
-            "",
+            str(protocol_directory()),
             "JSON files (*.json)",
         )
 
@@ -2319,7 +2312,7 @@ class MSPMainWindow(QMainWindow):
         filename, _ = QFileDialog.getSaveFileName(
             self,
             "Save Acquisition Protocol",
-            "",
+            str(protocol_directory()),
             "JSON files (*.json)",
         )
 
@@ -2773,6 +2766,11 @@ def create_hardware_manager() -> tuple[
         acquisition_controller,
         bleach_controller,
     )
+
+
+def protocol_directory() -> Path:
+    """Return the directory containing acquisition protocols."""
+    return config_directory() / "protocols"
 
 
 def main():

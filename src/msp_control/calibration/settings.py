@@ -2,10 +2,16 @@
 
 import json
 from pathlib import Path
+from msp_control.paths import config_directory
 
 def calibration_directory() -> Path:
     """Return the directory containing saved LED calibrations."""
-    return Path(__file__).resolve().parents[3] / "config" / "calibrations"
+    return config_directory() / "calibrations"
+
+
+def calibration_settings_path() -> Path:
+    """Return the path to the calibration settings file."""
+    return config_directory() / "calibration_settings.json"
 
 
 def find_calibration_files() -> list[Path]:
@@ -20,15 +26,6 @@ def find_calibration_files() -> list[Path]:
         calibration_dir.glob("*.h5"),
         key=lambda path: path.name,
         reverse=True,
-    )
-
-
-def calibration_settings_path() -> Path:
-    """Return the path to the calibration settings file."""
-    return (
-        Path(__file__).resolve().parents[3]
-        / "config"
-        / "calibration_settings.json"
     )
 
 
